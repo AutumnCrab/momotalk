@@ -1,0 +1,56 @@
+{
+  "characters": {
+    "shiroko": {
+      "name": "시로코",
+      "profile_img": "assets/profiles/shiroko.png",
+      "intro": "사이클링 파티 모집중··· (1/5)",
+      "schedule": [
+        { "day": "everyday", "time": "07:00", "messages": ["응, 선생님." , "좋은 아침."] },
+        { "day": "weekday",  "time": "12:30", "messages": ["점심은 챙겨 드셨어요?"] },
+        { "day": "wed",      "time": "19:00", "messages": ["오늘 훈련은 여기까지.", "수고하셨어요, 선생님."] }
+      ]
+    },
+    "hoshino": {
+      "name": "호시노",
+      "profile_img": "assets/profiles/hoshino.png",
+      "intro": "낮잠 중 방해금지",
+      "schedule": [
+        { "day": "everyday",            "time": "09:00", "messages": ["으헤" , "선생 좋은아침"] },
+        { "day": ["mon", "wed", "fri" , "sat" , "sun"], "time": "13:56", "messages": ["으헤" , "선생 밤중에 뭐하냐구" , "아저씨 생각중이야?"] }
+      ]
+    },
+    "serika": {
+      "name": "세리카",
+      "profile_img": "assets/profiles/serika.png",
+      "intro": "대책위원회 쿠로미 세리카입니다",
+      "schedule": [
+        { "day": "everyday", "time": "08:00", "messages": ["선생님, 오늘도 힘내!"] },
+        { "day": "sat",      "time": "23:04", "messages": ["선생님" , "뭐해?" , "한가해?"] }
+      ]
+    },
+    "ayane": {
+      "name": "아야네",
+      "profile_img": "assets/profiles/ayane.png",
+      "intro": "상식이 존중받는 동아리, 대책위원회입니다",
+      "schedule": [
+        { "day": "weekday", "time": "13:00", "messages": ["선생님, 오후 일정 정리해 두었어요."] }
+      ]
+    },
+    "nonomi": {
+      "name": "노노미",
+      "profile_img": "assets/profiles/nonomi.png",
+      "intro": "즐거운 하루 되세요!",
+      "schedule": [
+        { "day": "fri", "time": "20:00", "messages": ["불금이에요 선생님~ 오늘은 뭐 하세요?"] }
+      ]
+    },
+    "kuroko": {
+      "name": "시로코*테러",
+      "profile_img": "assets/profiles/kuroko.png",
+      "intro": "사이클링 파티 모집중··· (2/5)",
+      "schedule": [
+        { "day": "sun", "time": "00:20", "messages": ["응" , "선생님" , "나는 새벽 순찰중" , "선생님은?"] }
+      ]
+    }
+  }
+}

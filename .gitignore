@@ -1,0 +1,15 @@
+# ── 개인 설정 / 민감 정보 (직접 만들어서 채워야 함, .example.json 참고) ──
+config.json
+anniversaries.json
+chat_history.json
+
+# ── 파이썬 ──
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── OS / 에디터 ──
+.vscode/
+.DS_Store
+Thumbs.db
