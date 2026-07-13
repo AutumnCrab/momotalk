@@ -23,9 +23,12 @@ class Scheduler(QObject):
 
     CHECK_INTERVAL_MS = 15 * 1000
 
-    def __init__(self, characters):
+    def __init__(self, characters, enabled_keys=None):
         super().__init__()
         self.characters = characters
+        # enabled_keys 가 주어지면 그 키들만 발신 대상(그 외엔 다른 곳-B안-이 담당).
+        # None 이면 예전처럼 전원 대상(기존 동작과 완전히 동일).
+        self.enabled_keys = enabled_keys
         self._fired = set()     # "char|time|YYYY-MM-DD" 형태로 중복 발사 방지
         self.timer = QTimer(self)
         self.timer.setInterval(self.CHECK_INTERVAL_MS)
@@ -45,6 +48,8 @@ class Scheduler(QObject):
         self._fired = {k for k in self._fired if k.endswith(today)}
 
         for char in self.characters:
+            if self.enabled_keys is not None and char["key"] not in self.enabled_keys:
+                continue
             for entry in char.get("schedule", []):
                 if weekday in entry["days"] and entry["time"] == hhmm:
                     key = "%s|%s|%s" % (char["key"], entry["time"], today)

@@ -357,7 +357,7 @@ class MomoApp:
 
     def _check_live_timeout(self, worker, char_key):
         """일정 시간 안에 응답이 없으면 응답을 포기하고 UI 잠금을 풀어준다(무한 로딩 방지)."""
-        if worker.isFinished():
+        if worker not in self._workers:
             return   # 이미 끝났음 → 정상 처리된 것이니 아무 것도 안 함
         print("[모모톡] 응답 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
@@ -484,7 +484,7 @@ class MomoApp:
         self._poll_wake_continue()
 
     def _check_wake_timeout(self, worker, char_key):
-        if worker.isFinished():
+        if worker not in self._workers:
             return
         print("[모모톡] 기상 답장 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
@@ -587,7 +587,7 @@ class MomoApp:
     def _check_proactive_timeout(self, worker, char_key):
         # 타임아웃 시 busy 를 꼭 풀어줘야 한다. 안 풀면 그 학생은 이후 선톡/실시간 답장 모두
         # 영영 막혀버린다(on_user_message 가 proactive_busy 를 보고 계속 양보만 하게 됨).
-        if worker.isFinished():
+        if worker not in self._workers:
             return
         print("[모모톡] 선톡 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
@@ -689,7 +689,7 @@ class MomoApp:
         self._proactive_busy.discard(char_key)
 
     def _check_event_timeout(self, worker, char_key):
-        if worker.isFinished():
+        if worker not in self._workers:
             return
         print("[모모톡] 기념일 메시지 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
