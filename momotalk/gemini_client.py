@@ -85,6 +85,19 @@ def _split_slash_joined(items):
     return out
 
 
+def _dedupe_within_batch(items):
+    """한 번의 응답(messages 배열) 안에 완전히 동일한 문장이 중복으로 들어있으면 하나만 남긴다.
+    (모델이 한 응답 안에서 스스로 내용을 반복해서 보내는 경우를 걸러내기 위함)"""
+    seen = set()
+    out = []
+    for s in items:
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def parse_messages(text):
     """모델 응답 텍스트 → 메시지 문자열 리스트. 끝까지 파싱 실패하면 빈 리스트(호출부가 실패로 처리)."""
     if text is None:
@@ -125,6 +138,7 @@ def parse_messages(text):
         if s:
             out.append(s)
     out = _split_slash_joined(out)
+    out = _dedupe_within_batch(out)
     # 여기까지도 못 건지면 원본을 노출하지 않고 빈 리스트 반환
     # → GeminiWorker 가 실패로 간주해 기존 "지금은 답장하기 어려워요" 폴백으로 넘어간다.
     return out[:5]   # 안전상 최대 5개
