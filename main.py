@@ -85,7 +85,7 @@ class MomoApp:
 
         # persona(prompts/<key>.json)에 'activity' 가 있는 학생은 B안(활동 전환 시 AI 선톡)이 전담.
         # 없는 학생만 예전처럼 dialogues.json 의 고정 스케줄을 그대로 쓴다(호환 유지).
-        self.PROACTIVE_PROB = 0.35     # 활동이 바뀔 때 실제로 선톡을 보낼 확률
+        self.PROACTIVE_PROB = 0.50     # 활동이 바뀔 때 실제로 선톡을 보낼 확률
         self._activity_keys = set()
         for c in self.characters:
             p = persona_loader.load_persona(c["key"])
@@ -112,7 +112,7 @@ class MomoApp:
         self._last_activity_slot = {}   # key -> (시작시각, 설명)  직전에 기록해둔 활동 구간
         self._proactive_busy = set()    # 지금 선톡 생성 중인 학생 key (중복 호출 방지)
         self._proactive_log = []        # [(보낸시각, 학생key), ...] 최근 1시간 내 선톡 기록(인원 제한용)
-        self.PROACTIVE_MAX_PER_HOUR = 3  # 굴러가는 1시간 동안 선톡 보낼 수 있는 서로 다른 학생 수 상한
+        self.PROACTIVE_MAX_PER_HOUR = 4  # 굴러가는 1시간 동안 선톡 보낼 수 있는 서로 다른 학생 수 상한
         self._activity_timer = QTimer()
         self._activity_timer.setInterval(60 * 1000)   # 1분마다 활동 전환 체크
         self._activity_timer.timeout.connect(self._check_activity_transitions)
