@@ -82,6 +82,8 @@ class MomoApp:
         self._delivering = False
         self.TYPING_MS = 1800        # 한 톡당 '입력 중' 표시 시간(간격)
         self._last_delivered = {}    # key -> (직전에 배달한 메시지 묶음(tuple), 배달 시각) 중복 방지용
+        self._last_spoken = {}       # key -> 마지막으로 그 학생 톡이 온 시각 (선톡 쿨다운용)
+        self.PROACTIVE_COOLDOWN_SEC = 5 * 60   # 방금 무슨 톡이든 받은 학생은 이 시간 동안 선톡 쉼
 
         # persona(prompts/<key>.json)에 'activity' 가 있는 학생은 B안(활동 전환 시 AI 선톡)이 전담.
         # 없는 학생만 예전처럼 dialogues.json 의 고정 스케줄을 그대로 쓴다(호환 유지).
@@ -223,6 +225,7 @@ class MomoApp:
             print("[모모톡] 중복 메시지 감지 → 무시:", char_key, batch)
             return
         self._last_delivered[char_key] = (batch, now_ts)
+        self._last_spoken[char_key] = now_ts   # 선톡 쿨다운 판정용
 
         idle = (len(self._msg_queue) == 0 and not self._delivering)
         for m in messages:
@@ -536,6 +539,9 @@ class MomoApp:
                 continue
             if key in self._proactive_busy:
                 continue
+            last_spoken = self._last_spoken.get(key)
+            if last_spoken is not None and (time.time() - last_spoken) < self.PROACTIVE_COOLDOWN_SEC:
+                continue   # 방금 무슨 톡이든(실시간 답장/기상 답장 등) 받은 학생은 잠깐 쉼
             if not self._proactive_window_allows(key, now):
                 continue
             if random.random() > self.PROACTIVE_PROB:
