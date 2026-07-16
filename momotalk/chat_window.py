@@ -19,7 +19,7 @@ from PyQt5.QtCore import (
     QPropertyAnimation, QEasingCurve
 )
 from PyQt5.QtGui import (
-    QPainter, QPainterPath, QColor, QPen, QPolygonF, QPixmap, QRegion, QFont, QFontMetrics
+    QPainter, QPainterPath, QColor, QPen, QPolygonF, QPixmap, QRegion, QFont, QFontMetrics, QIcon
 )
 
 from . import theme
@@ -247,6 +247,7 @@ class ChatWindow(QWidget):
     message_sent = pyqtSignal(str)     # 선생님이 톡을 보냄 (char key)
     selection_changed = pyqtSignal(str)  # 다른 학생 대화로 전환함 (char key) — 입력창 잠금 재동기화용
     debug_proactive_requested = pyqtSignal()  # [디버그] F8: 깨어있는 학생 전원 대상 즉시 선톡 트리거
+    typing_changed = pyqtSignal(str)   # 입력창에 실제 텍스트 변경(타이핑)이 있음 (char key)
 
     def __init__(self, characters, store, unread=None):
         super().__init__()
@@ -269,6 +270,13 @@ class ChatWindow(QWidget):
         # 일반 창처럼 동작(다른 앱 클릭 시 뒤로 감) → StaysOnTop/Tool 제거
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setWindowTitle("MomoTalk")
+        # [UX] 작업표시줄에 파이썬 기본 아이콘 대신 모모톡 아이콘이 뜨도록.
+        import os
+        icon_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "momotalk.png"
+        )
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.resize(theme.CHAT_W, theme.CHAT_H)
 
@@ -500,6 +508,7 @@ class ChatWindow(QWidget):
             "font-size:14px;background:#F5F6F8;font-family:'%s';}" % theme.FONT_FAMILY
         )
         self._input.returnPressed.connect(self._send_my_message)
+        self._input.textChanged.connect(self._on_input_text_changed)
         self._sendbtn = QPushButton("보내기")
         self._sendbtn.setCursor(Qt.PointingHandCursor)
         self._sendbtn.setStyleSheet(
@@ -565,6 +574,13 @@ class ChatWindow(QWidget):
         self.refresh()
         self.message_sent.emit(key)     # main 이 받아서 Gemini 답장 요청
 
+    def _on_input_text_changed(self, text):
+        """입력창에 실제 텍스트 변경(자판 입력·삭제·붙여넣기 등)이 있을 때만 발생.
+        커서 깜빡임( | )은 여기 안 걸림 — Qt가 포커스만 있으면 자동으로 그리는 애니메이션이라
+        타이핑 여부와 무관하기 때문. textChanged 는 내용이 실제로 바뀔 때만 발생하는 진짜 신호."""
+        if self.selected_key is not None:
+            self.typing_changed.emit(self.selected_key)
+
     def refresh(self):
         while self._convo_layout.count():
             item = self._convo_layout.takeAt(0)
@@ -608,8 +624,16 @@ class ChatWindow(QWidget):
         QTimer.singleShot(0, self._scroll_to_bottom)
 
     def _scroll_to_bottom(self):
+        """대화 갱신 직후 항상 맨 아래로 스냅.
+        - 진행 중인 휠 스크롤/바운스 애니메이션이 있으면 먼저 멈춘다(안 그러면 애니메이션이
+          이후에도 값을 계속 밀어붙여서 setValue 가 무시된 것처럼 보임 = '스크롤이 안 따라감').
+        - 위젯을 방금 새로 갈아끼운 직후라 레이아웃이 아직 다 안 잡혔을 수 있으므로,
+          지금 한 번 + 다음 이벤트 루프 틱에 한 번 더(총 2번) 맨 아래로 맞춘다."""
         bar = self._scroll.verticalScrollBar()
+        self._scroll._anim.stop()
+        self._scroll._bounce_anim.stop()
         bar.setValue(bar.maximum())
+        QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
 
     def _name_label(self, name):
         lbl = QLabel(name)

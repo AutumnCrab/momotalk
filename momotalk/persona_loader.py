@@ -18,6 +18,37 @@ PROMPTS_DIR = os.path.join(BASE_DIR, "prompts")
 
 WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]  # datetime.weekday(): 월=0
 
+# address_terms 필드의 키(교사/학생 key)를 실제 사람 이름으로 표시하기 위한 매핑.
+# 이 6명은 고정 로스터라 하드코딩해도 무방(data_loader.py의 캐릭터 목록과 일치).
+_ADDRESS_TARGET_NAMES = {
+    "teacher": "선생님",
+    "shiroko": "시로코",
+    "hoshino": "호시노",
+    "serika": "세리카",
+    "ayane": "아야네",
+    "nonomi": "노노미",
+    "kuroko": "시로코*테러",
+}
+
+
+def build_address_terms_line(persona):
+    """[호칭] 블록: 이 학생이 선생님/다른 학생을 부를 때 쓰는 정확한 호칭을 프롬프트에 명시.
+    실제 대화에서 그 사람 얘기가 나올 때 이 표현을 쓰게 해서, 캐릭터 간 호칭이
+    대화마다 흔들리지 않고 항상 일관되게 유지되도록 한다."""
+    terms = persona.get("address_terms")
+    if not terms:
+        return ""
+    parts = []
+    for who, term in terms.items():
+        label = _ADDRESS_TARGET_NAMES.get(who, who)
+        term_str = " / ".join(term) if isinstance(term, list) else term
+        parts.append("%s → '%s'" % (label, term_str))
+    return (
+        "[호칭] 다른 사람을 지칭·호명할 때는 이렇게 부른다: " + ", ".join(parts)
+        + ". 대화 중 이 사람들 얘기가 나오면 항상 이 호칭을 쓴다"
+          "(존댓말/반말 선택과는 별개로, 이 명칭 자체는 지킬 것)."
+    )
+
 
 def load_persona(key):
     """prompts/<key>.json 을 읽어 dict 로 반환. 없으면 None."""
@@ -280,19 +311,65 @@ def is_awake(persona, now=None):
     return False
 
 
-def build_wake_note(pending_msgs, now=None):
+def activity_marker(persona, now=None):
     """
-    수면 중 쌓인 메시지를 '깨어나서 확인한 메시지' 안내 블록으로 조립.
+    현재 activity 슬롯 텍스트에 (S)/(W) 마커가 있으면 그걸 읽는다.
+    (S) = 취침중, (W) = 일/바쁨(회의·라이딩·알바 등). 마커 없으면 None.
+    선생님이 스케줄 옆에 직접 붙이는 표시라, 아직 안 붙인 슬롯은 자연히 None.
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    _, desc = current_activity(persona, now)
+    if not desc:
+        return None
+    if "(S)" in desc:
+        return "S"
+    if "(W)" in desc:
+        return "W"
+    return None
+
+
+def availability_status(persona, now=None):
+    """
+    학생의 현재 '응답 가능 여부'를 하나로 통일해서 판정.
+    반환: None(가능/평소처럼 응답) / "sleep"(취침중) / "busy"(부재중, 일하는 중)
+
+    우선순위: activity 텍스트의 (S)/(W) 마커 > awake 시간대 필드(하위 호환).
+    즉 마커를 붙인 슬롯은 마커가 우선이고, 아직 마커가 없는 슬롯은 기존
+    awake 시간대만으로 취침 여부를 판정한다(마커 안 붙였다고 갑자기 다 응답 가능으로 바뀌지 않음).
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    marker = activity_marker(persona, now)
+    if marker == "S":
+        return "sleep"
+    if marker == "W":
+        return "busy"
+    if not is_awake(persona, now):
+        return "sleep"
+    return None
+
+
+def build_wake_note(pending_msgs, now=None, reason="sleep"):
+    """
+    수면/부재중 중 쌓인 메시지를 '방금 확인한 메시지' 안내 블록으로 조립.
     pending_msgs: [{"text": str, "at": ISO 시각 문자열}, ...]
+    reason: "sleep"(자다가 확인) 또는 "busy"(일하다가 확인) — 상황 설명 문구가 달라짐.
     """
     if not pending_msgs:
         return ""
+    if reason == "busy":
+        situation = "네가 일(회의·알바 등)로 바빠서 못 보고 있다가 이제 막 여유가 생겨 확인한 상황이다."
+        hint = "바빠서 이제 막 확인했다는 걸 자연스럽게 티내면서,"
+    else:
+        situation = "네가 자는 동안 선생님이 아래 메시지를 보냈다. 지금 막 깨어나 그것들을 몰아서 확인한 상황이다."
+        hint = "자다가 이제 막 확인했다는 걸 자연스럽게 티내면서,"
     lines = [
-        "[깨어나서 확인한 메시지]",
-        "네가 자는 동안 선생님이 아래 메시지를 보냈다. 지금 막 깨어나 그것들을 몰아서 확인한 상황이다.",
+        "[깨어나서 확인한 메시지]" if reason != "busy" else "[방금 확인한 메시지]",
+        situation,
         "첫 마디를 네가 지금 뭘 하고 있었는지, 어디 있는지 같은 네 얘기로 시작하지 말 것."
-        " 자다가 이제 막 확인했다는 걸 자연스럽게 티내면서, 선생님이 무슨 일로 불렀는지"
-        " 되묻거나 선생님이 보낸 내용에 먼저 반응하는 것으로 시작해라. 네 얘기는 그다음에 이어가도 된다.",
+        " %s 선생님이 무슨 일로 불렀는지"
+        " 되묻거나 선생님이 보낸 내용에 먼저 반응하는 것으로 시작해라. 네 얘기는 그다음에 이어가도 된다." % hint,
         "순서대로 자연스럽게 이어서 답장하되, 하나하나 딱딱하게 나열하지 말고 대화하듯 답한다.",
     ]
     for m in pending_msgs:
@@ -363,8 +440,11 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         "",
         "[성격] %s" % persona.get("persona", ""),
         "[말투] %s" % persona.get("speech_style", ""),
-        "[지금 시각] %s" % time_label,
     ]
+    addr_line = build_address_terms_line(persona)
+    if addr_line:
+        lines.append(addr_line)
+    lines.append("[지금 시각] %s" % time_label)
     if activity_desc:
         lines.append("[지금 하는 일] %s" % activity_desc)
     elif today:

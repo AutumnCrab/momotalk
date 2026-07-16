@@ -95,6 +95,10 @@ class MomoApp:
         self._msg_queue = []
         self._delivering = False
         self.TYPING_MS = 1800        # 한 톡당 '입력 중' 표시 시간(간격)
+        # 선생님이 톡을 연달아 보내거나(또는 다음 말을 타이핑 중) 이 시간(ms) 동안 조용해지면
+        # 그제서야 학생이 답장을 시작한다. 그 사이 온 톡은 전부 한 번에 맥락으로 반영됨.
+        self.BATCH_QUIET_MS = 5000
+        self._batch_timers = {}     # char_key -> QTimer (5초 조용함 대기용)
         # 완전히 동일한 메시지 묶음이 이 시간(초) 안에 다시 배달되면 중복으로 보고 막는다.
         # 예전엔 20초였는데, 원인 불명의 근접/원거리 중복 재발 방지를 위해 넉넉하게 늘림.
         self.DEDUPE_WINDOW_SEC = 120
@@ -330,12 +334,38 @@ class MomoApp:
 
     # ───────────────── 내가 보낸 톡 → Gemini 답장 ─────────────────
     def on_user_message(self, char_key):
-        self._save_history()                       # 방금 보낸 내 톡 저장
+        """선생님이 톡을 보낼 때마다 호출됨. 바로 답장을 부르지 않고,
+        5초간 조용해질 때까지(추가 전송·타이핑 모두) 기다렸다가 한 번에 처리한다.
+        그 사이 저장은 즉시 하므로 대화창엔 보낸 순서대로 바로바로 뜬다."""
+        self._save_history()                       # 방금 보낸 내 톡 저장(화면 표시는 즉시)
+        self._arm_batch_timer(char_key)
+
+    def _arm_batch_timer(self, char_key):
+        """이 학생에 대한 '5초 조용함' 타이머를 (재)시작한다.
+        이미 돌고 있으면 처음부터 다시 5초 카운트(= 매번 활동이 있을 때마다 연장)."""
+        timer = self._batch_timers.get(char_key)
+        if timer is None:
+            timer = QTimer()
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda k=char_key: self._process_user_message(k))
+            self._batch_timers[char_key] = timer
+        timer.start(self.BATCH_QUIET_MS)
+
+    def _on_typing_activity(self, char_key):
+        """선생님이 입력창에 실제로 타이핑 중(텍스트 변경)이면, 아직 전송 전이라도
+        그 학생에 대한 답장 타이머를 계속 연장한다(= 다 쓰기 전엔 학생이 안 옴)."""
+        # 이 학생에게 아직 처리 대기 중인 배치가 있을 때만 연장 의미가 있음.
+        # (배치가 없는데 그냥 타이핑만 하는 경우까지 타이머를 새로 만들 필요는 없음)
+        if char_key in self._batch_timers and self._batch_timers[char_key].isActive():
+            self._arm_batch_timer(char_key)
+
+    def _process_user_message(self, char_key):
+        """5초간 조용해진 뒤 실제로 실행되는 처리부(예전 on_user_message 본문 그대로)."""
         if not self.state.is_idle(char_key):
             # 이 학생에 대해 이미 요청이 진행 중(이전 답장/선톡/기상/기념일 중 무엇이든).
             # 겹쳐서 두 번 호출되면 답장이 겹쳐 보이니, 살짝 기다렸다 한 번 다시 시도한다.
             # (다른 학생은 여기에 걸리지 않는다 — 학생별 상태이므로.)
-            QTimer.singleShot(800, lambda: self.on_user_message(char_key))
+            QTimer.singleShot(800, lambda: self._process_user_message(char_key))
             return
 
         persona = persona_loader.load_persona(char_key)
@@ -344,8 +374,9 @@ class MomoApp:
             return
 
         now = datetime.datetime.now()
-        if not persona_loader.is_awake(persona, now):
-            self._queue_pending(char_key, now)      # 자는 시간: 호출 안 하고 대기함에 저장
+        status = persona_loader.availability_status(persona, now)
+        if status is not None:
+            self._queue_pending(char_key, now, reason=status)   # 취침/부재중: 호출 안 하고 대기함에 저장
             return
 
         api_key = self.config.get("gemini_api_key", "").strip()
@@ -446,22 +477,26 @@ class MomoApp:
             print("[모모톡] 상태 스톨 자동 해제 →", freed)
             self._sync_input_lock()
 
-    # ───────────────── 수면 중: 대기 저장 + 부재중 안내 ─────────────────
-    def _queue_pending(self, char_key, now):
-        """학생이 자는 시간에 온 톡: API 호출 없이 대기함에 저장하고 부재중 안내만 띄운다."""
+    # ───────────────── 취침/부재중: 대기 저장 + 안내 표시 ─────────────────
+    ABSENT_LABELS = {"sleep": "(취침중)", "busy": "(부재중)"}
+
+    def _queue_pending(self, char_key, now, reason="sleep"):
+        """학생이 취침/부재중일 때 온 톡: API 호출 없이 대기함에 저장하고 상태별 안내만 띄운다.
+        reason: 'sleep'(취침중) 또는 'busy'(부재중, 일하는 중)."""
         last_text = ""
         conv = self.store.get(char_key, [])
         if conv and conv[-1][0] == "send":
             last_text = conv[-1][1]
         self.pending.setdefault(char_key, []).append(
-            {"text": last_text, "at": now.isoformat()}
+            {"text": last_text, "at": now.isoformat(), "reason": reason}
         )
-        self._deliver_absent_notice(char_key)
+        self._deliver_absent_notice(char_key, reason)
         self._save_history()
 
-    def _deliver_absent_notice(self, char_key):
-        """'(지금은 부재중입니다.)' 안내를 즉시(타이핑 표시 없이) 붙인다. API 실패 폴백과는 별개."""
-        self.store.setdefault(char_key, []).append(("absent", "(지금은 부재중입니다.)"))
+    def _deliver_absent_notice(self, char_key, reason="sleep"):
+        """'(취침중)' 또는 '(부재중)' 안내를 즉시(타이핑 표시 없이) 붙인다. API 실패 폴백과는 별개."""
+        label = self.ABSENT_LABELS.get(reason, self.ABSENT_LABELS["sleep"])
+        self.store.setdefault(char_key, []).append(("absent", label))
 
         viewing = (
             self.window is not None and self.window.isVisible()
@@ -485,7 +520,9 @@ class MomoApp:
                 continue
             persona = persona_loader.load_persona(key)
             # 지금 다른 요청(실시간 답장 등)이 진행 중인 학생은 이번엔 건너뛴다(다음 체크 때 다시).
-            if (persona is not None and persona_loader.is_awake(persona, now)
+            # '완전히 가능한' 상태(취침도 부재중도 아님)여야 밀린 톡을 처리한다.
+            if (persona is not None
+                    and persona_loader.availability_status(persona, now) is None
                     and self.state.is_idle(key)):
                 ready.append(key)
         if not ready:
@@ -517,7 +554,8 @@ class MomoApp:
             QTimer.singleShot(1200, self._process_next_wake)
             return
 
-        wake_note = persona_loader.build_wake_note(msgs)
+        wake_reason = msgs[-1].get("reason", "sleep") if msgs else "sleep"
+        wake_note = persona_loader.build_wake_note(msgs, reason=wake_reason)
         self._refresh_daily_events()
         event_note = ""
         ev = self._event_schedule.get(char_key)
@@ -633,7 +671,8 @@ class MomoApp:
         if current_slot != slot:
             return
         # 활동이 바뀌는 순간 발견. 이런저런 이유로 지금은 선톡을 보내면 안 되는 경우들 거르기.
-        if not persona_loader.is_awake(persona, now):
+        # 취침중이든 부재중(W)이든 지금은 응답 불가 상태이므로 선톡도 쉰다.
+        if persona_loader.availability_status(persona, now) is not None:
             return
         # 이 학생이 지금 다른 요청(실시간 답장/기상/기념일/이전 선톡) 중이면 건너뜀.
         # (다른 학생이 바쁜 것과는 무관 — 학생별 상태이므로.)
@@ -665,8 +704,8 @@ class MomoApp:
             persona = persona_loader.load_persona(key)
             if persona is None:
                 continue
-            if not persona_loader.is_awake(persona, now):
-                continue   # 자는 학생은 디버그에서도 대상 아님(실제 동작과 일관성 유지)
+            if persona_loader.availability_status(persona, now) is not None:
+                continue   # 취침/부재중(W) 학생은 디버그에서도 대상 아님(실제 동작과 일관성 유지)
             slot = persona_loader.current_activity(persona, now)
             if slot[0] is None:
                 continue
@@ -687,8 +726,13 @@ class MomoApp:
         persona = persona_loader.load_persona(char_key)
         schedule_context = persona_loader.recent_schedule_context(persona, now, hours=12) if persona else ""
         proactive_note = persona_loader.build_proactive_note(activity_desc, schedule_context)
+        # 선톡은 대화 원문(build_history)을 넘기지 않는다 — 73분 전 실시간답장 문구를
+        # 그대로 재활용해 반복하는 사고가 실제로 있었음(라이브 확인됨). 애정도/기억은
+        # chat_history.json 파일엔 그대로 남으니, 다음 실시간 답장 때는 정상적으로 다시 쓰인다.
+        # 선톡은 이제 recent_schedule_context(스케줄 사실)만으로 판단하므로, 구조적으로
+        # 과거 대화 문구를 재사용할 수 있는 재료 자체가 없다.
         system_prompt, contents = persona_loader.assemble(
-            char_key, self.store.get(char_key, []), now=now, proactive_note=proactive_note
+            char_key, [], now=now, proactive_note=proactive_note
         )
         if system_prompt is None:
             return
@@ -779,8 +823,8 @@ class MomoApp:
             if now < ev["at"]:
                 continue
             persona = persona_loader.load_persona(key)
-            if persona is None or not persona_loader.is_awake(persona, now):
-                continue   # 아직 안 깨어났으면 다음에 깨어있을 때 다시 시도
+            if persona is None or persona_loader.availability_status(persona, now) is not None:
+                continue   # 아직 취침/부재중이면 다음에 가능해질 때 다시 시도
             if not self.state.is_idle(key):
                 continue   # 이 학생이 지금 다른 요청 중이면 다음 체크 때 다시
             self._send_event_message(key, ev)
@@ -847,6 +891,7 @@ class MomoApp:
             self.window.selection_changed.connect(lambda k: self._sync_input_lock())
             # [디버그] F8: 즉시 선톡 강제 트리거
             self.window.debug_proactive_requested.connect(self._debug_force_proactive_all)
+            self.window.typing_changed.connect(self._on_typing_activity)
 
         win = self.window
         if win.selected_key is not None:
@@ -915,8 +960,23 @@ def main():
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
+    # [UX] 작업표시줄에 '파이썬'이 아니라 모모톡으로 뜨게 하기.
+    # Windows는 taskbar 항목을 실행파일(python.exe) 기준으로 묶기 때문에,
+    # AppUserModelID를 직접 지정해줘야 별도의 앱으로 인식하고 아이콘도 따로 표시한다.
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("momotalk.widget")
+        except Exception as e:
+            print("[모모톡] 작업표시줄 아이콘 설정 실패(무시 가능):", e)
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setApplicationName("모모톡")
+    _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "momotalk.png")
+    if os.path.exists(_icon_path):
+        from PyQt5.QtGui import QIcon
+        app.setWindowIcon(QIcon(_icon_path))
 
     # 앱 전용 폰트 로드 후 전체 기본 폰트로 지정
     from PyQt5.QtGui import QFont
