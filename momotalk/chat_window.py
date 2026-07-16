@@ -245,6 +245,8 @@ class _TypingDots(QWidget):
 
 class ChatWindow(QWidget):
     message_sent = pyqtSignal(str)     # 선생님이 톡을 보냄 (char key)
+    selection_changed = pyqtSignal(str)  # 다른 학생 대화로 전환함 (char key) — 입력창 잠금 재동기화용
+    debug_proactive_requested = pyqtSignal()  # [디버그] F8: 깨어있는 학생 전원 대상 즉시 선톡 트리거
 
     def __init__(self, characters, store, unread=None):
         super().__init__()
@@ -291,6 +293,9 @@ class ChatWindow(QWidget):
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
             self.hide()
+        elif e.key() == Qt.Key_F8:
+            # [디버그 전용] 실제 대기 없이 즉시 선톡 트리거 재현용. 배포판에선 몰라도 무해함.
+            self.debug_proactive_requested.emit()
 
     # ───────────────────────── UI ─────────────────────────
     def _build_ui(self):
@@ -532,6 +537,7 @@ class ChatWindow(QWidget):
         for k in self._msg_rows:
             self._style_row(self._msg_rows, k)
         self.refresh()
+        self.selection_changed.emit(key)
 
     def _style_row(self, rows, key):
         row = rows.get(key)

@@ -13,6 +13,7 @@
 """
 
 import sys
+import os
 import random
 import datetime
 import time
@@ -32,6 +33,7 @@ from momotalk.scheduler import Scheduler
 from momotalk.icon_widget import MomoTalkIcon
 from momotalk.chat_window import ChatWindow
 from momotalk.gemini_client import GeminiWorker, load_config
+from momotalk.student_state import StudentStateMachine
 
 
 class MomoApp:
@@ -60,6 +62,13 @@ class MomoApp:
                     self.pending[k] = saved_pending[k]
             print("[모모톡] 이전 대화를 불러왔어요.")
 
+            # 과거에 어떤 이유로든 대화 기록에 쌓인 '학생 발화 반복'을 시작 시 1회 청소한다.
+            # (반복된 기록이 다음 프롬프트에 들어가 또 반복을 유발하는 악순환을 끊기 위함)
+            cleaned = history_store.clean_repeated_recv(self.store)
+            if cleaned:
+                print("[모모톡] 반복된 과거 답장 %d개를 정리했어요." % cleaned)
+                history_store.save(self.store, self.unread, self.pending)
+
         self.icon = MomoTalkIcon()
         self.icon.open_requested.connect(self.open_chat)
         self.icon.hide_requested.connect(self.hide_icon)
@@ -73,14 +82,26 @@ class MomoApp:
         # Gemini 답장 관련
         self.config = load_config()
         self._workers = []          # QThread 참조 보관(GC 방지)
-        self._waiting = False       # 답장 대기 중(쿨다운)
         self.GEMINI_TIMEOUT_MS = 25 * 1000   # 이 시간 안에 응답이 없으면 클라이언트 쪽에서 포기 처리
         self._abandoned_workers = set()      # 타임아웃으로 포기한 워커(뒤늦게 응답 와도 무시하기 위함)
+
+        # ── 학생별 동시성 상태(상태머신) ──
+        # 예전의 _waiting(전역)·_proactive_busy(set)를 하나로 통합.
+        # "이 학생에게 지금 새 요청을 걸어도 되는가"는 오직 이 상태로만 판정한다.
+        # 서로 다른 학생은 서로를 막지 않는다(A 답장 대기 중에도 B에겐 말 걸 수 있음).
+        self.state = StudentStateMachine([c["key"] for c in self.characters])
 
         # 여러 톡이 한꺼번에 오지 않도록: 큐에 넣고 [입력중...] 표시 후 하나씩
         self._msg_queue = []
         self._delivering = False
         self.TYPING_MS = 1800        # 한 톡당 '입력 중' 표시 시간(간격)
+        # 완전히 동일한 메시지 묶음이 이 시간(초) 안에 다시 배달되면 중복으로 보고 막는다.
+        # 예전엔 20초였는데, 원인 불명의 근접/원거리 중복 재발 방지를 위해 넉넉하게 늘림.
+        self.DEDUPE_WINDOW_SEC = 120
+        # 배달 진단 로그 파일 경로(콘솔 로그와 별개로 파일에도 남겨서 나중에 원인 추적 가능하게 함)
+        self._debug_log_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "debug_delivery.log"
+        )
         self._last_delivered = {}    # key -> (직전에 배달한 메시지 묶음(tuple), 배달 시각) 중복 방지용
         self._last_spoken = {}       # key -> 마지막으로 그 학생 톡이 온 시각 (선톡 쿨다운용)
         self.PROACTIVE_COOLDOWN_SEC = 5 * 60   # 방금 무슨 톡이든 받은 학생은 이 시간 동안 선톡 쉼
@@ -98,7 +119,9 @@ class MomoApp:
         print("[모모톡] 기존 고정 스케줄 대상:", sorted(legacy_keys) or "없음")
 
         self.scheduler = Scheduler(self.characters, enabled_keys=legacy_keys)
-        self.scheduler.message_ready.connect(self.on_message)
+        self.scheduler.message_ready.connect(
+            lambda k, m: self.on_message(k, m, reason="legacy_schedule")
+        )
         self.scheduler.start()
 
         # 자는 동안 쌓인 톡 → 기상 후 학생별로 순서대로(겹치면 한 명씩 텀 두고) 일괄 답장
@@ -112,9 +135,12 @@ class MomoApp:
 
         # B안: 활동 구간이 바뀌면 확률적으로 AI가 먼저 말을 건다
         self._last_activity_slot = {}   # key -> (시작시각, 설명)  직전에 기록해둔 활동 구간
-        self._proactive_busy = set()    # 지금 선톡 생성 중인 학생 key (중복 호출 방지)
         self._proactive_log = []        # [(보낸시각, 학생key), ...] 최근 1시간 내 선톡 기록(인원 제한용)
         self.PROACTIVE_MAX_PER_HOUR = 4  # 굴러가는 1시간 동안 선톡 보낼 수 있는 서로 다른 학생 수 상한
+        # 활동이 바뀐 걸 감지해도 정각에 우르르 몰리지 않도록, 그 활동 구간 시작 후
+        # 이 범위(초) 안에서 학생별로 랜덤한 시점에 (그때 조건을 다시 확인하고) 선톡을 시도한다.
+        self.PROACTIVE_DELAY_MIN_SEC = 15 * 60
+        self.PROACTIVE_DELAY_MAX_SEC = 45 * 60
         self._activity_timer = QTimer()
         self._activity_timer.setInterval(60 * 1000)   # 1분마다 활동 전환 체크
         self._activity_timer.timeout.connect(self._check_activity_transitions)
@@ -131,6 +157,13 @@ class MomoApp:
         self._event_timer.timeout.connect(self._check_daily_events)
         self._event_timer.start()
         QTimer.singleShot(1500, self._check_daily_events)
+
+        # 안전망: end() 호출이 어쩌다 누락돼 학생이 영영 GENERATING 으로 굳는 사고 방지.
+        # 타임아웃(25초)보다 넉넉히 오래 굳어있으면 강제로 IDLE 로 되돌린다.
+        self._reaper_timer = QTimer()
+        self._reaper_timer.setInterval(30 * 1000)
+        self._reaper_timer.timeout.connect(self._reap_stalled_states)
+        self._reaper_timer.start()
 
         self.icon.show()
         self.icon.raise_()
@@ -215,14 +248,20 @@ class MomoApp:
         history_store.save(self.store, self.unread, self.pending)
 
 
-    def on_message(self, char_key, messages):
+    def on_message(self, char_key, messages, reason="unknown"):
+        # [진단 로그] 이 학생에게 '언제, 어떤 트리거로, 무슨 내용이' 배달 시도됐는지
+        # 밀리초 단위로 남긴다. 근접/원거리 중복이 재발하면 이 로그로 정확한 원인을 잡기 위함.
+        self._log_delivery(char_key, messages, reason)
+
         # 어떤 경로로든(선톡/기상답장/기념일 등이 겹치는 등) 방금 배달한 것과 완전히 같은
         # 메시지 묶음이 짧은 시간 안에 다시 들어오면 중복으로 보고 무시한다.
         now_ts = time.time()
         batch = tuple(messages)
         last = self._last_delivered.get(char_key)
-        if last is not None and last[0] == batch and (now_ts - last[1]) < 20:
-            print("[모모톡] 중복 메시지 감지 → 무시:", char_key, batch)
+        if last is not None and last[0] == batch and (now_ts - last[1]) < self.DEDUPE_WINDOW_SEC:
+            print("[모모톡] 중복 메시지 감지 → 무시:", char_key, "| 이유:", reason,
+                  "| 이전 배달과의 간격: %.1f초" % (now_ts - last[1]))
+            self._log_delivery(char_key, messages, reason, blocked=True)
             return
         self._last_delivered[char_key] = (batch, now_ts)
         self._last_spoken[char_key] = now_ts   # 선톡 쿨다운 판정용
@@ -232,6 +271,18 @@ class MomoApp:
             self._msg_queue.append((char_key, m))
         if idle:
             self._begin_typing()
+
+    def _log_delivery(self, char_key, messages, reason, blocked=False):
+        """진단용 로그. 콘솔 + debug_delivery.log 파일에 남긴다(밀리초 타임스탬프 포함)."""
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        tag = "[차단됨]" if blocked else "[배달시도]"
+        preview = " / ".join(m[:20] for m in messages[:3])
+        line = "%s %s %s reason=%s msgs=%d | %s" % (ts, tag, char_key, reason, len(messages), preview)
+        try:
+            with open(self._debug_log_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception as e:
+            print("[진단 로그 기록 실패]", e)
 
     def _begin_typing(self):
         if not self._msg_queue:
@@ -280,17 +331,16 @@ class MomoApp:
     # ───────────────── 내가 보낸 톡 → Gemini 답장 ─────────────────
     def on_user_message(self, char_key):
         self._save_history()                       # 방금 보낸 내 톡 저장
-        if self._waiting:
-            return                                 # 쿨다운: 답장 받는 중엔 무시
-        if char_key in self._proactive_busy:
-            # 마침 이 학생에게 선톡/기념일 메시지가 만들어지고 있는 중.
-            # 그대로 같이 호출하면 답장이 겹쳐 보이니, 살짝 기다렸다가 한 번만 다시 시도한다.
+        if not self.state.is_idle(char_key):
+            # 이 학생에 대해 이미 요청이 진행 중(이전 답장/선톡/기상/기념일 중 무엇이든).
+            # 겹쳐서 두 번 호출되면 답장이 겹쳐 보이니, 살짝 기다렸다 한 번 다시 시도한다.
+            # (다른 학생은 여기에 걸리지 않는다 — 학생별 상태이므로.)
             QTimer.singleShot(800, lambda: self.on_user_message(char_key))
             return
 
         persona = persona_loader.load_persona(char_key)
         if persona is None:
-            self.on_message(char_key, ["(prompts/%s.json 이 없어요.)" % char_key])
+            self.on_message(char_key, ["(prompts/%s.json 이 없어요.)" % char_key], reason="live_error")
             return
 
         now = datetime.datetime.now()
@@ -300,7 +350,7 @@ class MomoApp:
 
         api_key = self.config.get("gemini_api_key", "").strip()
         if not api_key:
-            self.on_message(char_key, ["(config.json 에 API 키를 넣어주세요.)"])
+            self.on_message(char_key, ["(config.json 에 API 키를 넣어주세요.)"], reason="live_error")
             return
 
         self._refresh_daily_events()   # 혹시 아직 오늘 기념일 계산 전이면 지금 해둠
@@ -316,12 +366,12 @@ class MomoApp:
             char_key, self.store.get(char_key, []), now=now, event_note=event_note
         )
         if system_prompt is None:
-            self.on_message(char_key, ["(prompts/%s.json 이 없어요.)" % char_key])
+            self.on_message(char_key, ["(prompts/%s.json 이 없어요.)" % char_key], reason="live_error")
             return
 
-        self._waiting = True
+        self.state.begin(char_key, "live")
+        self._sync_input_lock()                    # 보고 있는 학생이면 입력창 잠금
         if self.window is not None:
-            self.window.set_input_enabled(False)
             if self.window.isVisible() and self.window.selected_key == char_key:
                 self.window.set_typing(char_key)   # 응답 기다리는 동안 입력중 점
 
@@ -341,22 +391,22 @@ class MomoApp:
         if worker is not None and worker in self._abandoned_workers:
             self._abandoned_workers.discard(worker)   # 타임아웃 처리 후 뒤늦게 온 응답 → 무시
             return
-        self._waiting = False
+        self.state.end(char_key)
+        self._sync_input_lock()
         if self.window is not None:
-            self.window.set_input_enabled(True)
             self.window._typing_key = None
-        self.on_message(char_key, messages)        # 기존 입력중→간격 전달로 출력
+        self.on_message(char_key, messages, reason="live")         # 기존 입력중→간격 전달로 출력
 
     def _on_reply_failed(self, char_key, error, worker=None):
         if worker is not None and worker in self._abandoned_workers:
             self._abandoned_workers.discard(worker)
             return
         print("[Gemini 실패]", char_key, error)
-        self._waiting = False
+        self.state.end(char_key)
+        self._sync_input_lock()
         if self.window is not None:
-            self.window.set_input_enabled(True)
             self.window._typing_key = None
-        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."])
+        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="live_failed")
 
     def _check_live_timeout(self, worker, char_key):
         """일정 시간 안에 응답이 없으면 응답을 포기하고 UI 잠금을 풀어준다(무한 로딩 방지)."""
@@ -364,13 +414,13 @@ class MomoApp:
             return   # 이미 끝났음 → 정상 처리된 것이니 아무 것도 안 함
         print("[모모톡] 응답 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
-        self._waiting = False
+        self.state.end(char_key)
+        self._sync_input_lock()
         if self.window is not None:
-            self.window.set_input_enabled(True)
             self.window._typing_key = None
             if self.window.isVisible():
                 self.window.clear_typing()
-        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."])
+        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="live_timeout")
 
     def _cleanup_worker(self, worker):
         try:
@@ -378,6 +428,23 @@ class MomoApp:
         except ValueError:
             pass
         worker.deleteLater()
+
+    def _sync_input_lock(self):
+        """입력창 잠금을 '지금 보고 있는 학생'의 상태에 맞춘다.
+        예전처럼 앱 전체를 잠그는 게 아니라, 지금 화면에 열려 있는 학생이 답장 생성 중일 때만 잠근다.
+        → 시로코 답장을 기다리는 동안에도 호시노 대화로 넘어가면 입력이 가능하다."""
+        if self.window is None:
+            return
+        key = getattr(self.window, "selected_key", None)
+        locked = key is not None and self.state.is_generating(key)
+        self.window.set_input_enabled(not locked)
+
+    def _reap_stalled_states(self):
+        """혹시 end() 가 누락돼 학생이 영영 GENERATING 으로 굳었으면 자동 해제(안전망)."""
+        freed = self.state.reap_stalled(self.GEMINI_TIMEOUT_MS / 1000 + 15)
+        if freed:
+            print("[모모톡] 상태 스톨 자동 해제 →", freed)
+            self._sync_input_lock()
 
     # ───────────────── 수면 중: 대기 저장 + 부재중 안내 ─────────────────
     def _queue_pending(self, char_key, now):
@@ -417,7 +484,9 @@ class MomoApp:
             if not msgs:
                 continue
             persona = persona_loader.load_persona(key)
-            if persona is not None and persona_loader.is_awake(persona, now):
+            # 지금 다른 요청(실시간 답장 등)이 진행 중인 학생은 이번엔 건너뛴다(다음 체크 때 다시).
+            if (persona is not None and persona_loader.is_awake(persona, now)
+                    and self.state.is_idle(key)):
                 ready.append(key)
         if not ready:
             return
@@ -434,12 +503,17 @@ class MomoApp:
         if not msgs:
             self._process_next_wake()
             return
+        # 이 학생이 그새 다른 요청 중이 되었으면(예: 실시간 답장 시작) 이번엔 건너뛴다.
+        # pending 은 건드리지 않으므로 다음 _check_wakeups(1분) 때 다시 처리된다.
+        if not self.state.begin(char_key, "wake"):
+            self._process_next_wake()
+            return
         self.pending[char_key] = []
         self._save_history()
 
         api_key = self.config.get("gemini_api_key", "").strip()
         if not api_key:
-            self.on_message(char_key, ["(어, 미안. 이제 봤어. 근데 config.json에 키가 없어서 답장을 못 만들겠어.)"])
+            self.on_message(char_key, ["(어, 미안. 이제 봤어. 근데 config.json에 키가 없어서 답장을 못 만들겠어.)"], reason="wake_error")
             QTimer.singleShot(1200, self._process_next_wake)
             return
 
@@ -475,7 +549,8 @@ class MomoApp:
         if worker is not None and worker in self._abandoned_workers:
             self._abandoned_workers.discard(worker)
             return
-        self.on_message(char_key, messages)
+        self.state.end(char_key)
+        self.on_message(char_key, messages, reason="wake")
         self._poll_wake_continue()
 
     def _on_wake_reply_failed(self, char_key, error, worker=None):
@@ -483,7 +558,8 @@ class MomoApp:
             self._abandoned_workers.discard(worker)
             return
         print("[기상 답장 실패]", char_key, error)
-        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."])
+        self.state.end(char_key)
+        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="wake_failed")
         self._poll_wake_continue()
 
     def _check_wake_timeout(self, worker, char_key):
@@ -491,8 +567,9 @@ class MomoApp:
             return
         print("[모모톡] 기상 답장 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
+        self.state.end(char_key)
         print("[기상 답장 실패]", char_key, "시간 초과")
-        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."])
+        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="wake_timeout")
         self._poll_wake_continue()
 
     def _poll_wake_continue(self):
@@ -532,40 +609,96 @@ class MomoApp:
             if prev is None or prev == slot:
                 continue   # 첫 기준점이거나 아직 같은 활동 구간 → 발신 안 함
 
-            # 활동이 바뀌는 순간 발견. 이런저런 이유로 지금은 선톡을 보내면 안 되는 경우들 거르기.
+            # 활동이 막 바뀐 순간 발견. 여기서 바로 보내지 않고, 정각에 여러 학생이
+            # 한꺼번에 몰리는 걸 피하기 위해 15~45분 사이 랜덤한 시점으로 미뤄서 시도한다.
+            # (조건 재확인은 그 예약된 시각에 전부 다시 함 — 아래 _attempt_delayed_proactive)
+            delay_sec = random.uniform(self.PROACTIVE_DELAY_MIN_SEC, self.PROACTIVE_DELAY_MAX_SEC)
+            QTimer.singleShot(
+                int(delay_sec * 1000),
+                lambda k=key, s=slot: self._attempt_delayed_proactive(k, s)
+            )
+
+    def _attempt_delayed_proactive(self, key, slot):
+        """_check_activity_transitions 에서 예약해둔 지연 선톡 시도.
+        15~45분이나 지난 뒤라 상황이 달라졌을 수 있으니, 보내도 되는지 조건을 전부 다시 확인한다."""
+        if key in self._event_participants_today:
+            return
+        persona = persona_loader.load_persona(key)
+        if persona is None:
+            return
+        now = datetime.datetime.now()
+        # 예약해둔 그 활동 구간이 지금도 유효한지(그 사이 다음 구간으로 넘어가지 않았는지) 확인.
+        # 넘어갔다면 이제 와서 그 얘기를 하면 어색하므로 이번 선톡은 조용히 포기한다.
+        current_slot = persona_loader.current_activity(persona, now)
+        if current_slot != slot:
+            return
+        # 활동이 바뀌는 순간 발견. 이런저런 이유로 지금은 선톡을 보내면 안 되는 경우들 거르기.
+        if not persona_loader.is_awake(persona, now):
+            return
+        # 이 학생이 지금 다른 요청(실시간 답장/기상/기념일/이전 선톡) 중이면 건너뜀.
+        # (다른 학생이 바쁜 것과는 무관 — 학생별 상태이므로.)
+        if not self.state.is_idle(key):
+            return
+        last_spoken = self._last_spoken.get(key)
+        if last_spoken is not None and (time.time() - last_spoken) < self.PROACTIVE_COOLDOWN_SEC:
+            return   # 방금 무슨 톡이든(실시간 답장/기상 답장 등) 받은 학생은 잠깐 쉼
+        if not self._proactive_window_allows(key, now):
+            return
+        if random.random() > self.PROACTIVE_PROB:
+            return
+
+        self._send_proactive(key, slot[1], now)
+
+    def _debug_force_proactive_all(self):
+        """[디버그 전용] F8 단축키로 호출됨.
+        실제 활동 전환(slot 변경)이나 5분 쿨다운, 시간당 인원 상한을 전부 건너뛰고,
+        '지금' 깨어있는 학생 전원을 대상으로 각자 현재 activity 기준 50% 확률로 즉시 선톡을 발동시킨다.
+        원래 버그(여러 학생이 겹쳐서 중복 응답)를 실제 대기 없이 즉시 재현해보기 위한 도구.
+        상태머신(state.begin)은 그대로 통하므로, 이미 다른 요청이 진행 중인 학생은 여전히 조용히 건너뛴다.
+        """
+        now = datetime.datetime.now()
+        print("[디버그] F8 강제 선톡 트리거 실행 —", now.strftime("%H:%M:%S"))
+        picked = []
+        for key in self._activity_keys:
+            if key in self._event_participants_today:
+                continue   # 기념일 대상은 디버그에서도 제외(실제 흐름과 충돌 방지)
+            persona = persona_loader.load_persona(key)
+            if persona is None:
+                continue
             if not persona_loader.is_awake(persona, now):
-                continue
-            if self._waiting or self._wake_processing:
-                continue
-            if key in self._proactive_busy:
-                continue
-            last_spoken = self._last_spoken.get(key)
-            if last_spoken is not None and (time.time() - last_spoken) < self.PROACTIVE_COOLDOWN_SEC:
-                continue   # 방금 무슨 톡이든(실시간 답장/기상 답장 등) 받은 학생은 잠깐 쉼
-            if not self._proactive_window_allows(key, now):
+                continue   # 자는 학생은 디버그에서도 대상 아님(실제 동작과 일관성 유지)
+            slot = persona_loader.current_activity(persona, now)
+            if slot[0] is None:
                 continue
             if random.random() > self.PROACTIVE_PROB:
-                continue
+                continue   # 여기서도 50% 확률 굴림(실제와 동일한 조건 재현)
+            picked.append((key, slot[1]))
+            self._send_proactive(key, slot[1], now, debug=True)
+        if picked:
+            print("[디버그] 이번에 선톡 시도한 학생:", [k for k, _ in picked])
+        else:
+            print("[디버그] 이번엔 확률/조건에 걸려 아무도 선택 안 됨(다시 눌러보세요)")
 
-            self._send_proactive(key, slot[1], now)
-
-    def _send_proactive(self, char_key, activity_desc, now):
+    def _send_proactive(self, char_key, activity_desc, now, debug=False):
         api_key = self.config.get("gemini_api_key", "").strip()
         if not api_key:
             return   # 선톡은 조용히 스킵(키 없다고 안내문까지 띄울 필요는 없음)
 
-        proactive_note = persona_loader.build_proactive_note(activity_desc)
+        persona = persona_loader.load_persona(char_key)
+        schedule_context = persona_loader.recent_schedule_context(persona, now, hours=12) if persona else ""
+        proactive_note = persona_loader.build_proactive_note(activity_desc, schedule_context)
         system_prompt, contents = persona_loader.assemble(
             char_key, self.store.get(char_key, []), now=now, proactive_note=proactive_note
         )
         if system_prompt is None:
             return
 
-        self._proactive_busy.add(char_key)
+        if not self.state.begin(char_key, "proactive"):
+            return   # 그새 다른 요청이 시작됐으면 이번 선톡은 포기(중복 방지)
         worker = GeminiWorker(
             char_key, api_key, self.config.get("model", ""), system_prompt, contents
         )
-        worker.done.connect(lambda k, m, w=worker: self._on_proactive_reply(k, m, w))
+        worker.done.connect(lambda k, m, w=worker: self._on_proactive_reply(k, m, w, debug=debug))
         worker.failed.connect(lambda k, e, w=worker: self._on_proactive_failed(k, e, w))
         worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
         self._workers.append(worker)
@@ -574,20 +707,20 @@ class MomoApp:
             self.GEMINI_TIMEOUT_MS, lambda w=worker, k=char_key: self._check_proactive_timeout(w, k)
         )
 
-    def _on_proactive_reply(self, char_key, messages, worker=None):
+    def _on_proactive_reply(self, char_key, messages, worker=None, debug=False):
         if worker is not None and worker in self._abandoned_workers:
             self._abandoned_workers.discard(worker)
             return
-        self._proactive_busy.discard(char_key)
+        self.state.end(char_key)
         self._proactive_log.append((datetime.datetime.now(), char_key))
-        self.on_message(char_key, messages)
+        self.on_message(char_key, messages, reason="proactive_debug" if debug else "proactive")
 
     def _on_proactive_failed(self, char_key, error, worker=None):
         if worker is not None and worker in self._abandoned_workers:
             self._abandoned_workers.discard(worker)
             return
         print("[선톡 실패]", char_key, error)
-        self._proactive_busy.discard(char_key)
+        self.state.end(char_key)
         # 선톡은 실패해도 사용자에게 폴백 문구를 띄우지 않는다(원래 없던 톡이니 조용히 스킵).
 
     def _check_proactive_timeout(self, worker, char_key):
@@ -598,7 +731,7 @@ class MomoApp:
         print("[모모톡] 선톡 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
         print("[선톡 실패]", char_key, "시간 초과")
-        self._proactive_busy.discard(char_key)
+        self.state.end(char_key)
 
     # ───────── 기념일(학생 생일 / 선생님 생일 / 세계 기념일) ─────────
     def _refresh_daily_events(self):
@@ -648,8 +781,8 @@ class MomoApp:
             persona = persona_loader.load_persona(key)
             if persona is None or not persona_loader.is_awake(persona, now):
                 continue   # 아직 안 깨어났으면 다음에 깨어있을 때 다시 시도
-            if key in self._proactive_busy or self._waiting or self._wake_processing:
-                continue
+            if not self.state.is_idle(key):
+                continue   # 이 학생이 지금 다른 요청 중이면 다음 체크 때 다시
             self._send_event_message(key, ev)
 
     def _send_event_message(self, char_key, ev):
@@ -666,8 +799,9 @@ class MomoApp:
             ev["sent"] = True
             return
 
-        ev["sent"] = True   # 먼저 표시해서 재시도로 중복 발송되지 않게 함
-        self._proactive_busy.add(char_key)
+        if not self.state.begin(char_key, "event"):
+            return   # 그새 다른 요청이 시작됐으면 sent 표시하지 말고 다음 체크 때 다시 시도
+        ev["sent"] = True   # begin 성공 후에만 표시(재시도로 인한 중복 발송 방지)
         worker = GeminiWorker(
             char_key, api_key, self.config.get("model", ""), system_prompt, contents
         )
@@ -684,15 +818,15 @@ class MomoApp:
         if worker is not None and worker in self._abandoned_workers:
             self._abandoned_workers.discard(worker)
             return
-        self._proactive_busy.discard(char_key)
-        self.on_message(char_key, messages)
+        self.state.end(char_key)
+        self.on_message(char_key, messages, reason="event")
 
     def _on_event_failed(self, char_key, error, worker=None):
         if worker is not None and worker in self._abandoned_workers:
             self._abandoned_workers.discard(worker)
             return
         print("[기념일 메시지 실패]", char_key, error)
-        self._proactive_busy.discard(char_key)
+        self.state.end(char_key)
 
     def _check_event_timeout(self, worker, char_key):
         if worker not in self._workers:
@@ -700,7 +834,7 @@ class MomoApp:
         print("[모모톡] 기념일 메시지 시간 초과 →", char_key)
         self._abandoned_workers.add(worker)
         print("[기념일 메시지 실패]", char_key, "시간 초과")
-        self._proactive_busy.discard(char_key)
+        self.state.end(char_key)
 
     # ───────────────── 채팅창 열기 ─────────────────
     def open_chat(self, origin=None):
@@ -709,11 +843,16 @@ class MomoApp:
         if self.window is None:
             self.window = ChatWindow(self.characters, self.store, self.unread)
             self.window.message_sent.connect(self.on_user_message)
+            # 학생 전환 시 입력창 잠금을 새 학생 상태에 맞춰 갱신
+            self.window.selection_changed.connect(lambda k: self._sync_input_lock())
+            # [디버그] F8: 즉시 선톡 강제 트리거
+            self.window.debug_proactive_requested.connect(self._debug_force_proactive_all)
 
         win = self.window
         if win.selected_key is not None:
             self.unread[win.selected_key] = 0    # 보고 있는 학생은 읽음
         win.refresh()
+        self._sync_input_lock()                  # 열 때 현재 학생 상태에 맞춰 입력창 잠금 동기화
         self._update_tray_tooltip()
         if win.isVisible():
             win.raise_()

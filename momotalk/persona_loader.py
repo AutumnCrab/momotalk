@@ -81,20 +81,81 @@ def current_activity(persona, now=None):
     return None, None
 
 
-def build_proactive_note(activity_desc):
-    """활동 전환 시점에 학생이 먼저 말 거는(B안) 상황을 시스템 프롬프트에 얹을 안내문."""
+def recent_schedule_context(persona, now=None, hours=12):
+    """
+    [선톡 전용] 대화 원문(build_history) 대신 쓸 '사실 기반' 근황 요약.
+    최근 hours 시간 동안 activity 에 적힌 시각들을 시간순으로 그대로 나열한다.
+    (자정을 넘는 구간도 어제 activity 까지 이어서 포함한다.)
+    과거 '대화 내용'이 아니라 '스케줄 사실'만 다루므로, 예전 대화 문구를 그대로
+    다시 말하게 될 위험이 구조적으로 없다.
+    반환: 사람이 읽을 수 있는 여러 줄 문자열, 또는 activity 가 없으면 "".
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    activity = persona.get("activity")
+    if not activity:
+        return ""
+
+    def _sorted_entries(day_map):
+        out = []
+        for t, desc in (day_map or {}).items():
+            try:
+                out.append((_parse_hhmm(t), t, desc))
+            except Exception:
+                continue
+        out.sort(key=lambda x: x[0])
+        return out
+
+    wd = now.weekday()
+    cur_abs = now.hour * 60 + now.minute            # 오늘=day 0 기준 절대 분(0~1439)
+    window_start_abs = cur_abs - hours * 60          # 음수면 어제로 걸침
+
+    today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
+    yest_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd - 1) % 7]))
+
+    # 어제 항목은 절대 분 기준으로 -1440 오프셋(어제 00:00 = -1440)
+    combined = [(mins - 1440, t, desc) for mins, t, desc in yest_entries]
+    combined += [(mins, t, desc) for mins, t, desc in today_entries]
+    combined.sort(key=lambda x: x[0])
+
+    window = [(t, desc) for mins, t, desc in combined
+              if window_start_abs <= mins <= cur_abs]
+    if not window:
+        return ""
+
+    lines = ["[최근 %d시간 흐름]" % hours]
+    for t, desc in window:
+        lines.append("  %s - %s" % (t, desc))
+    return "\n".join(lines)
+
+
+def build_proactive_note(activity_desc, schedule_context=""):
+    """활동 전환 시점에 학생이 먼저 말 거는(B안) 상황을 시스템 프롬프트에 얹을 안내문.
+    schedule_context 를 주면 '최근 N시간 스케줄 흐름'(사실 기반, 대화 원문 아님)도 같이 얹는다.
+    선톡의 소재는 이 스케줄 사실에서 가져오게 유도해, 예전 대화 문구를 그대로 다시
+    말하게 되는 반복을 구조적으로 줄인다."""
     if not activity_desc:
         return ""
-    return (
-        "[선톡 상황]\n"
-        "지금은 선생님이 아무 말도 하지 않았고, 네가 먼저 말을 거는 상황이다.\n"
-        "지금 네가 하고 있는 일: %s\n"
+    lines = [
+        "[선톡 상황]",
+        "지금은 선생님이 아무 말도 하지 않았고, 네가 먼저 말을 거는 상황이다.",
+        "지금 네가 하고 있는 일: %s" % activity_desc,
+    ]
+    if schedule_context:
+        lines.append("")
+        lines.append(schedule_context)
+        lines.append(
+            "지금 무슨 말을 할지는 위 [최근 N시간 흐름]에 있는 사실을 근거로 정한다."
+            " 대화 기록에 예전에 네가 썼던 문구가 있더라도 그걸 그대로 다시 쓰지 말고,"
+            " 방금 확인한 이 최신 스케줄 사실을 기준으로 지금 처음 하는 말처럼 새로 표현한다."
+        )
+    lines.append(
         "너무 뜬금없이 네 상황부터 늘어놓지 말 것. 먼저 선생님을 부르거나 안부·근황을 묻는"
         " 짧은 한마디로 시작한 다음(예: 지금 뭐 하고 있는지 궁금해하는 식), 자연스럽게"
         " 네가 하고 있는 일이나 하고 싶은 말로 이어가라. 1~2개의 짧은 말풍선으로, 편하게"
         " 톡을 보내는 느낌이면 된다. 너무 격식 차리지 말 것."
-        % activity_desc
     )
+    return "\n".join(lines)
 
 
 def is_persona_birthday(persona, now=None):
@@ -349,6 +410,11 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 말고 짧게 되묻거나 인사로만 반응한다(매번 같은 문구 대신 그때그때 다르게). 먼저 꺼낼 용건이"
         " 있더라도 선생님이 묻지 않았다면 매번 들이밀지 말고 자연스러운 흐름에서만 꺼낸다.",
 
+        "- [반복 절대 금지] 이번에 보내는 messages 배열 안에서 같은 말을 두 번 넣지 않는다. 그리고"
+        " 대화 기록에서 네가 '직전에 이미 보낸 말풍선'을 토씨까지 똑같이 다시 보내지 않는다. 설령"
+        " 대화 기록에 네가 같은 말을 반복한 흔적이 보이더라도, 그건 실수였을 뿐 네 말버릇이 아니다."
+        " 절대 그 반복을 흉내 내거나 이어가지 말고, 지금은 한 번만, 새로운 말로 답한다.",
+
         "- [예시 사용법] 위 [대화 예시]는 말투·길이를 보여주는 참고일 뿐이다. 예시 속 상황이나 용건을"
         " 현재 대화에 그대로 가져와 말하지 말고, 지금 맥락과 선생님의 마지막 말에 맞춰 답한다.",
 
@@ -390,12 +456,25 @@ def build_history(store_list, limit=20):
     → Gemini contents 형식 [{"role": "user"/"model", "parts": [{"text": ...}]}, ...]
     선생님 = user, 학생(나 자신) = model.
     'absent' 는 실제 대화가 아닌 UI 전용 시스템 문구라 히스토리에서 제외한다.
+
+    [반복 방지] 과거에 어떤 이유로든 모델(학생)의 완전히 같은 말이 연달아 저장돼 있으면,
+    그걸 그대로 프롬프트에 넣으면 모델이 '이 캐릭터는 원래 같은 말을 반복한다'고 오학습해서
+    다음 답장도 반복하게 되는 악순환이 생긴다. 그래서 연속으로 완전히 동일한 model 턴은
+    하나로 합쳐서(직전과 같은 model 발화는 건너뜀) 프롬프트에 넣는다.
+    (사용자(user) 발화는 손대지 않는다 — '노노미노노미야'처럼 일부러 반복해 부를 수 있으므로.)
     """
     contents = []
+    prev_model_text = None
     for sender, text in store_list[-limit:]:
         if sender == "absent":
             continue
         role = "model" if sender == "recv" else "user"
+        if role == "model":
+            if text == prev_model_text:
+                continue   # 직전 model 발화와 완전히 동일 → 반복 학습 방지 위해 생략
+            prev_model_text = text
+        else:
+            prev_model_text = None   # 사용자 발화가 끼면 연속 판정 리셋
         contents.append({"role": role, "parts": [{"text": text}]})
     return contents
 
