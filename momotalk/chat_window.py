@@ -9,6 +9,7 @@
 """
 
 import os
+import datetime
 
 from PyQt5.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QVBoxLayout, QHBoxLayout,
@@ -603,7 +604,7 @@ class ChatWindow(QWidget):
         if not text or self.selected_key is None:
             return
         key = self.selected_key
-        self.store.setdefault(key, []).append(("send", text))
+        self.store.setdefault(key, []).append(("send", text, datetime.datetime.now().isoformat()))
         self._input.clear()
         self.refresh()
         self.message_sent.emit(key)     # main 이 받아서 Gemini 답장 요청
@@ -634,15 +635,20 @@ class ChatWindow(QWidget):
             self._convo_layout.addWidget(empty)
         else:
             prev = None
-            for sender, text in convo:
+            for i, entry in enumerate(convo):
+                sender, text = entry[0], entry[1]
+                ts = entry[2] if len(entry) > 2 else None
                 new_group = (sender != prev)
+                next_sender = convo[i + 1][0] if i + 1 < len(convo) else None
+                is_last_in_group = (next_sender != sender)
+                time_label = self._format_time(ts) if (is_last_in_group and ts) else None
                 if sender == "send":
-                    self._convo_layout.addWidget(self._send_bubble(text))
+                    self._convo_layout.addWidget(self._send_bubble(text, time_label))
                 else:
                     if new_group:
                         self._convo_layout.addWidget(self._name_label(char["name"]))
                     self._convo_layout.addWidget(
-                        self._recv_bubble(text, char, show_avatar=new_group))
+                        self._recv_bubble(text, char, show_avatar=new_group, time_label=time_label))
                 prev = sender
             if typing_here:
                 self._convo_layout.addWidget(self._typing_row(char))
@@ -668,6 +674,20 @@ class ChatWindow(QWidget):
         self._scroll._bounce_anim.stop()
         bar.setValue(bar.maximum())
         QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
+
+    def _format_time(self, iso_str):
+        """ISO 시각 문자열 → '오전/오후 H:MM' 표시용 텍스트. 실패하거나 옛 데이터(시각 없음)면 None."""
+        if not iso_str:
+            return None
+        try:
+            dt = datetime.datetime.fromisoformat(iso_str)
+        except Exception:
+            return None
+        period = "오전" if dt.hour < 12 else "오후"
+        h12 = dt.hour % 12
+        if h12 == 0:
+            h12 = 12
+        return "%s %d:%02d" % (period, h12, dt.minute)
 
     def _name_label(self, name):
         lbl = QLabel(name)
@@ -714,7 +734,7 @@ class ChatWindow(QWidget):
         longest_line = max((fm.horizontalAdvance(seg) for seg in text.split("\n")), default=0)
         return int(min(longest_line + pad, maxw))
 
-    def _recv_bubble(self, text, char, show_avatar):
+    def _recv_bubble(self, text, char, show_avatar, time_label=None):
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
@@ -734,10 +754,17 @@ class ChatWindow(QWidget):
         )
         h.addWidget(av, 0, Qt.AlignTop)
         h.addWidget(bubble)
+        if time_label:
+            t = QLabel(time_label)
+            t.setStyleSheet(
+                "color:%s;font-size:10px;font-family:'%s';background:transparent;"
+                % (theme.NAME_GRAY, theme.FONT_FAMILY)
+            )
+            h.addWidget(t, 0, Qt.AlignBottom)
         h.addStretch(1)
         return row
 
-    def _send_bubble(self, text):
+    def _send_bubble(self, text, time_label=None):
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
@@ -751,5 +778,12 @@ class ChatWindow(QWidget):
             % (theme.SEND_BUBBLE, theme.SEND_TEXT, theme.FONT_FAMILY)
         )
         h.addStretch(1)
+        if time_label:
+            t = QLabel(time_label)
+            t.setStyleSheet(
+                "color:%s;font-size:10px;font-family:'%s';background:transparent;"
+                % (theme.NAME_GRAY, theme.FONT_FAMILY)
+            )
+            h.addWidget(t, 0, Qt.AlignBottom)
         h.addWidget(bubble)
         return row

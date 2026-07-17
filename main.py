@@ -279,7 +279,7 @@ class MomoApp:
 
         idle = (len(self._msg_queue) == 0 and not self._delivering)
         for m in messages:
-            self._msg_queue.append((char_key, m))
+            self._msg_queue.append((char_key, m, reason))
         if idle:
             self._begin_typing()
 
@@ -313,10 +313,12 @@ class MomoApp:
             if self.window is not None:
                 self.window.clear_typing()
             return
-        char_key, text = self._msg_queue.pop(0)
+        char_key, text, reason = self._msg_queue.pop(0)
         if self.window is not None:
             self.window._typing_key = None        # 점 제거(아래 refresh가 새로 그림)
-        self.store.setdefault(char_key, []).append(("recv", text))
+        self.store.setdefault(char_key, []).append(
+            ("recv", text, datetime.datetime.now().isoformat(), reason)
+        )
 
         viewing = (
             self.window is not None and self.window.isVisible()
@@ -516,7 +518,9 @@ class MomoApp:
     def _deliver_absent_notice(self, char_key, reason="sleep"):
         """'(취침중)' 또는 '(부재중)' 안내를 즉시(타이핑 표시 없이) 붙인다. API 실패 폴백과는 별개."""
         label = self.ABSENT_LABELS.get(reason, self.ABSENT_LABELS["sleep"])
-        self.store.setdefault(char_key, []).append(("absent", label))
+        self.store.setdefault(char_key, []).append(
+            ("absent", label, datetime.datetime.now().isoformat(), reason)
+        )
 
         viewing = (
             self.window is not None and self.window.isVisible()

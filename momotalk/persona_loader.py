@@ -683,9 +683,24 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
     return "\n".join(lines)
 
 
-def build_history(store_list, limit=20):
+def _format_gap(delta_min):
+    """분 단위 시간차 → '3시간', '1일 2시간' 같은 사람이 읽을 표현으로."""
+    delta_min = int(delta_min)
+    days, rem_min = divmod(delta_min, 1440)
+    hours, minutes = divmod(rem_min, 60)
+    parts = []
+    if days:
+        parts.append("%d일" % days)
+    if hours:
+        parts.append("%d시간" % hours)
+    if not days and not hours and minutes:
+        parts.append("%d분" % minutes)
+    return " ".join(parts) if parts else "0분"
+
+
+def build_history(store_list, limit=20, gap_threshold_min=60):
     """
-    store[key] = [(sender, text), ...]  (sender: 'recv'=학생, 'send'=선생님, 'absent'=부재중 안내)
+    store[key] = [(sender, text), ...] 또는 [(sender, text, 시각ISO), ...]
     → Gemini contents 형식 [{"role": "user"/"model", "parts": [{"text": ...}]}, ...]
     선생님 = user, 학생(나 자신) = model.
     'absent' 는 실제 대화가 아닌 UI 전용 시스템 문구라 히스토리에서 제외한다.
@@ -695,10 +710,19 @@ def build_history(store_list, limit=20):
     다음 답장도 반복하게 되는 악순환이 생긴다. 그래서 연속으로 완전히 동일한 model 턴은
     하나로 합쳐서(직전과 같은 model 발화는 건너뜀) 프롬프트에 넣는다.
     (사용자(user) 발화는 손대지 않는다 — '노노미노노미야'처럼 일부러 반복해 부를 수 있으므로.)
+
+    [시간 간격 인지] 예전엔 대화 기록이 그냥 순서만 있는 텍스트 나열이라, 메시지 사이에
+    몇 분이 지났는지 며칠이 지났는지 모델이 전혀 구분할 방법이 없었다(전부 '방금 오간 대화'
+    처럼 보임). 이제 저장된 타임스탬프(3번째 필드, 있을 때만)를 이용해 직전 메시지와의 간격이
+    gap_threshold_min(기본 60분) 이상이면 그 메시지 앞에 '[N시간 경과]' 같은 안내를 붙인다.
+    타임스탬프가 없는 옛 데이터(2-tuple)는 간격 계산을 그냥 건너뛴다(안전하게 무시).
     """
     contents = []
     prev_model_text = None
-    for sender, text in store_list[-limit:]:
+    prev_ts = None
+    for entry in store_list[-limit:]:
+        sender, text = entry[0], entry[1]   # 3번째(타임스탬프)가 있어도/없어도 안전
+        ts = entry[2] if len(entry) > 2 else None
         if sender == "absent":
             continue
         role = "model" if sender == "recv" else "user"
@@ -708,7 +732,21 @@ def build_history(store_list, limit=20):
             prev_model_text = text
         else:
             prev_model_text = None   # 사용자 발화가 끼면 연속 판정 리셋
-        contents.append({"role": role, "parts": [{"text": text}]})
+
+        gap_prefix = ""
+        if ts and prev_ts:
+            try:
+                cur_dt = datetime.datetime.fromisoformat(ts)
+                prev_dt = datetime.datetime.fromisoformat(prev_ts)
+                delta_min = (cur_dt - prev_dt).total_seconds() / 60
+                if delta_min >= gap_threshold_min:
+                    gap_prefix = "[%s 경과]\n" % _format_gap(delta_min)
+            except Exception:
+                pass
+        if ts:
+            prev_ts = ts
+
+        contents.append({"role": role, "parts": [{"text": gap_prefix + text}]})
     return contents
 
 

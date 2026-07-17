@@ -18,18 +18,23 @@ HISTORY_PATH = os.path.join(BASE_DIR, "chat_history.json")
 
 
 def _dedupe_recv_run(run):
-    """한 recv-run(학생 발화 연속) 안에서 인접하게 통째로 반복되는 블록을 축약한다.
-    예: [A,B,C, A,B,C, D] → [A,B,C, D]. 긴 블록부터 탐욕적으로 접는다. 반환: (정리된 run, 제거수)."""
+    """한 recv-run(학생 발화 연속, 각 원소는 [sender, text] 또는 [sender, text, 시각] 전체 엔트리)
+    안에서 인접하게 통째로 반복되는 블록을 축약한다. 비교는 텍스트(index 1)만 기준으로 하되,
+    실제로 남기고 지울 땐 타임스탬프 등 나머지 필드까지 포함한 전체 엔트리를 그대로 유지한다.
+    예: 텍스트가 [A,B,C, A,B,C, D]면 → [A,B,C, D](뒤쪽 중복 엔트리 통째로 삭제).
+    긴 블록부터 탐욕적으로 접는다. 반환: (정리된 run, 제거수)."""
     removed = 0
     changed = True
     while changed:
         changed = False
+        texts = [e[1] for e in run]
         for L in range(len(run) // 2, 0, -1):
             found = False
             i = 0
             while i + 2 * L <= len(run):
-                if run[i:i + L] == run[i + L:i + 2 * L]:
+                if texts[i:i + L] == texts[i + L:i + 2 * L]:
                     del run[i + L:i + 2 * L]
+                    del texts[i + L:i + 2 * L]
                     removed += L
                     found = True
                     changed = True
@@ -53,17 +58,17 @@ def clean_repeated_recv(store):
             if conv[i][0] == "recv":
                 run = []
                 while i < n and conv[i][0] == "recv":
-                    run.append(conv[i][1]); i += 1
+                    run.append(list(conv[i])); i += 1   # 전체 엔트리(타임스탬프 포함) 그대로 유지
                 segments.append(("recv", run))
             else:
                 segments.append(("other", conv[i])); i += 1
         rebuilt = []
         for kind, payload in segments:
             if kind == "recv":
-                cleaned, r = _dedupe_recv_run(list(payload))
+                cleaned, r = _dedupe_recv_run(payload)
                 total_removed += r
-                for t in cleaned:
-                    rebuilt.append(("recv", t))
+                for entry in cleaned:
+                    rebuilt.append(tuple(entry))
             else:
                 rebuilt.append(tuple(payload))
         store[key] = rebuilt
