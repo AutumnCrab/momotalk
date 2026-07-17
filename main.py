@@ -169,6 +169,13 @@ class MomoApp:
         self._reaper_timer.timeout.connect(self._reap_stalled_states)
         self._reaper_timer.start()
 
+        # [상태 점등] 학생소개 탭 아바타의 초록/회색/빨강 점을 주기적으로 최신화.
+        # Gemini 호출 없는 순수 로컬 계산이라 가볍게 자주 돌려도 됨.
+        self._presence_timer = QTimer()
+        self._presence_timer.setInterval(30 * 1000)
+        self._presence_timer.timeout.connect(self._update_presence_dots)
+        self._presence_timer.start()
+
         self.icon.show()
         self.icon.raise_()
         self.icon.activateWindow()
@@ -388,7 +395,7 @@ class MomoApp:
         event_note = ""
         ev = self._event_schedule.get(char_key)
         if ev is not None:
-            event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"))
+            event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
             if ev["kind"] == "own_birthday" and not ev["sent"]:
                 # 선생님이 먼저 말을 걸었으니, 예약해둔 '학생이 먼저 생일 알리기'는 취소
                 self._event_cancelled.add(char_key)
@@ -477,6 +484,19 @@ class MomoApp:
             print("[모모톡] 상태 스톨 자동 해제 →", freed)
             self._sync_input_lock()
 
+    def _update_presence_dots(self):
+        """학생소개 탭의 초록/회색/빨강 상태점을 최신 availability_status 로 갱신.
+        Gemini 호출 없는 로컬 계산이라 부담 없이 자주 돌린다."""
+        if self.window is None:
+            return
+        now = datetime.datetime.now()
+        for key in self._activity_keys:
+            persona = persona_loader.load_persona(key)
+            if persona is None:
+                continue
+            status = persona_loader.availability_status(persona, now)
+            self.window.set_presence(key, status)
+
     # ───────────────── 취침/부재중: 대기 저장 + 안내 표시 ─────────────────
     ABSENT_LABELS = {"sleep": "(취침중)", "busy": "(부재중)"}
 
@@ -560,7 +580,8 @@ class MomoApp:
         event_note = ""
         ev = self._event_schedule.get(char_key)
         if ev is not None:
-            event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"))
+            persona = persona_loader.load_persona(char_key)
+            event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
             if ev["kind"] == "own_birthday" and not ev["sent"]:
                 self._event_cancelled.add(char_key)   # 선생님이 자는 동안 보낸 톡에 답하는 것도 '대화 발생'으로 취급
 
@@ -835,7 +856,8 @@ class MomoApp:
             ev["sent"] = True
             return
 
-        note = persona_loader.build_event_note(ev["kind"], ev.get("extra"))
+        persona = persona_loader.load_persona(char_key)
+        note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
         system_prompt, contents = persona_loader.assemble(
             char_key, self.store.get(char_key, []), now=datetime.datetime.now(), event_note=note
         )
@@ -892,6 +914,7 @@ class MomoApp:
             # [디버그] F8: 즉시 선톡 강제 트리거
             self.window.debug_proactive_requested.connect(self._debug_force_proactive_all)
             self.window.typing_changed.connect(self._on_typing_activity)
+            self._update_presence_dots()   # 창 만들자마자 상태점 첫 반영(30초 타이머 기다리지 않게)
 
         win = self.window
         if win.selected_key is not None:

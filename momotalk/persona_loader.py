@@ -160,6 +160,124 @@ def recent_schedule_context(persona, now=None, hours=12):
     return "\n".join(lines)
 
 
+def upcoming_schedule_context(persona, now=None, hours=6):
+    """
+    앞으로 hours 시간 동안 activity 에 적힌 예정된 일정을 시간순으로 나열.
+    '이따 뭐 할 거야?' 류 질문에 스케줄 근거로 답할 수 있게 하기 위함.
+    (자정을 넘는 구간은 내일 activity 까지 이어서 포함한다.)
+    아직 안 일어난 일이므로, 호출부에서 반드시 '예정' 뉘앙스로 쓰라고 별도 지시가 필요하다
+    (이 함수 자체는 사실 나열만 하고 뉘앙스 지시는 build_system_prompt 쪽에서 붙인다).
+    반환: 사람이 읽을 수 있는 여러 줄 문자열, 또는 activity 가 없으면 "".
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    activity = persona.get("activity")
+    if not activity:
+        return ""
+
+    def _sorted_entries(day_map):
+        out = []
+        for t, desc in (day_map or {}).items():
+            try:
+                out.append((_parse_hhmm(t), t, desc))
+            except Exception:
+                continue
+        out.sort(key=lambda x: x[0])
+        return out
+
+    wd = now.weekday()
+    cur_abs = now.hour * 60 + now.minute
+    window_end_abs = cur_abs + hours * 60            # 1440 넘으면 내일로 걸침
+
+    today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
+    tomo_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd + 1) % 7]))
+
+    combined = [(mins, t, desc) for mins, t, desc in today_entries]
+    combined += [(mins + 1440, t, desc) for mins, t, desc in tomo_entries]
+    combined.sort(key=lambda x: x[0])
+
+    # 지금 시각 이후에 '시작'하는 항목만 (지금 하는 일은 [지금 하는 일]에서 이미 다룸)
+    window = [(t, desc) for mins, t, desc in combined
+              if cur_abs < mins <= window_end_abs]
+    if not window:
+        return ""
+
+    lines = ["[앞으로 %d시간 예정]" % hours]
+    for t, desc in window:
+        lines.append("  %s - %s" % (t, desc))
+    return "\n".join(lines)
+
+
+# B: 학생 간 맥락 공유 — activity 텍스트에서 반복 등장하는 장소성 키워드.
+# 완전한 장소 필드가 없으니 문자열 겹침으로 "같이 있을 가능성"만 느슨하게 추정한다.
+_PLACE_KEYWORDS = ["시바세키", "동아리실", "학교", "아비도스", "마트", "라멘집", "라멘", "창고", "카페", "식당"]
+
+_STUDENT_KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko"]
+
+
+def _activity_markers(desc):
+    """(O)/(X) 마커 존재 여부만 뽑는다. (S)/(W)는 취침/부재중 판정용이라 여기선 안 씀."""
+    return {"O": "(O)" in desc, "X": "(X)" in desc}
+
+
+def build_co_present_note(char_key, now=None):
+    """
+    [B: 맥락 공유] 지금 이 시각, 다른 학생들의 activity 텍스트를 훑어서
+    '같이 있을 가능성이 있는 사람'을 찾아 안내문으로 만든다.
+    판정 신호 세 가지(하나라도 맞으면 채택):
+      1. (O) 마커 겹침 — 둘 다 (O)(전원 공식 일정)면 같은 자리에 있다고 봐도 신뢰도 높음
+      2. (X) 마커 겹침 — 둘 다 (X)(교차 이벤트)면 서로 얽힌 장면일 가능성 높음
+      3. 이름 언급 — 상대 activity 텍스트에 내 이름이 나오거나, 내 activity 텍스트에 상대 이름이 나옴
+      4. 장소 키워드 겹침 — 서로의 activity 텍스트에 같은 장소성 단어(_PLACE_KEYWORDS)가 등장
+    완벽한 장소 필드가 없는 상태에서의 느슨한 추정이라, 반드시 '확정 아님' 뉘앙스로 안내한다.
+    반환: 안내 문자열, 또는 아무도 안 겹치면 "".
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    me = load_persona(char_key)
+    if me is None:
+        return ""
+    _, my_desc = current_activity(me, now)
+    if not my_desc:
+        return ""
+    my_name = _ADDRESS_TARGET_NAMES.get(char_key, char_key)
+    my_places = {kw for kw in _PLACE_KEYWORDS if kw in my_desc}
+    my_markers = _activity_markers(my_desc)
+
+    found = []
+    for other_key in _STUDENT_KEYS:
+        if other_key == char_key:
+            continue
+        other = load_persona(other_key)
+        if other is None:
+            continue
+        _, other_desc = current_activity(other, now)
+        if not other_desc:
+            continue
+        other_name = _ADDRESS_TARGET_NAMES.get(other_key, other_key)
+        name_match = (other_name in my_desc) or (my_name in other_desc)
+        other_places = {kw for kw in _PLACE_KEYWORDS if kw in other_desc}
+        place_match = bool(my_places & other_places)
+        other_markers = _activity_markers(other_desc)
+        marker_match = (
+            (my_markers["O"] and other_markers["O"])
+            or (my_markers["X"] and other_markers["X"])
+        )
+        if name_match or place_match or marker_match:
+            found.append((other_name, other_desc))
+
+    if not found:
+        return ""
+    lines = ["[함께 있을 가능성이 있는 사람] (스케줄 텍스트 기반 느슨한 추정, 100% 확정 아님)"]
+    for other_name, other_desc in found:
+        lines.append("  %s: %s" % (other_name, other_desc))
+    lines.append(
+        "확실하지 않으면 단정짓지 말고, 대화 중 자연스럽게 참고만 한다(예: 그 사람 얘기가 나오면"
+        " 지금 상황을 아는 것처럼 반응해도 되지만, 굳이 먼저 나서서 확정적으로 언급하지 않는다)."
+    )
+    return "\n".join(lines)
+
+
 def build_proactive_note(activity_desc, schedule_context=""):
     """활동 전환 시점에 학생이 먼저 말 거는(B안) 상황을 시스템 프롬프트에 얹을 안내문.
     schedule_context 를 주면 '최근 N시간 스케줄 흐름'(사실 기반, 대화 원문 아님)도 같이 얹는다.
@@ -199,28 +317,42 @@ def is_persona_birthday(persona, now=None):
     return now.strftime("%m-%d") == bday
 
 
-def build_event_note(kind, extra=None):
+def build_event_note(kind, extra=None, persona=None):
     """기념일 종류별 시스템 프롬프트 지시문. AI가 알아서 자연스럽게 표현하도록만 지시하고,
-    구체적 대사는 하나도 미리 정해두지 않는다."""
+    구체적 대사는 하나도 미리 정해두지 않는다 — 단, persona에 birthday_few_shot이 있고
+    kind가 own_birthday/teacher_birthday면 그 캐릭터 목소리의 예시 대사를 참고용으로 덧붙인다."""
+    note = ""
     if kind == "own_birthday":
-        return (
+        note = (
             "[오늘의 특별한 날]\n"
             "오늘은 너의 생일이다. 대화 중 자연스럽게 그 사실이 드러나도 좋고, 선생님이 먼저 축하해주면"
             " 기쁘게 반응해라. 너무 호들갑 떨 필요 없이 딱 너다운 방식으로 받아들이면 된다."
         )
-    if kind == "teacher_birthday":
-        return (
+    elif kind == "teacher_birthday":
+        note = (
             "[오늘의 특별한 날]\n"
             "오늘은 선생님의 생일이다. 진심을 담아 축하 인사를 건네라. 너의 성격과 말투에 맞는 방식으로"
             " 축하하면 된다."
         )
-    if kind == "world_holiday":
+    elif kind == "world_holiday":
         name = extra or "특별한 날"
-        return (
+        note = (
             "[오늘의 특별한 날]\n"
             "오늘은 %s다. 이 날에 어울리는 화제나 인사를 자연스럽게 꺼내라." % name
         )
-    return ""
+    else:
+        return ""
+
+    if persona and kind in ("own_birthday", "teacher_birthday"):
+        bfs = persona.get("birthday_few_shot", {}).get(kind)
+        if bfs:
+            note += (
+                "\n\n[생일 대사 예시] (아래는 네가 이런 상황에서 실제로 하는 말의 어조·길이 참고용이다."
+                " 상황·문구를 그대로 베끼지 말고, 이런 느낌으로 지금 처음 하는 말처럼 자연스럽게 표현할 것)"
+            )
+            for i, line in enumerate(bfs, 1):
+                note += "\n  (말풍선 %d) %s" % (i, line)
+    return note
 
 
 def pick_random_awake_datetime(persona, date):
@@ -449,6 +581,21 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         lines.append("[지금 하는 일] %s" % activity_desc)
     elif today:
         lines.append("[오늘의 상황] %s" % today)
+
+    upcoming = upcoming_schedule_context(persona, now, hours=6)
+    if upcoming:
+        lines.append(upcoming)
+        lines.append(
+            "[예정 사실 안내] 위 [앞으로 6시간 예정]은 아직 일어나지 않은 미래 일정이다."
+            " '이따 뭐 할 거야?' 같은 질문을 받으면 이 사실을 근거로 예정형('~할 거야', '~할 예정이야')"
+            "으로 답해도 된다. 하지만 절대 이미 겪은 일처럼 과거형으로 말하거나, 아직 안 한 일을"
+            " 방금 한 것처럼 서술하지 않는다."
+        )
+
+    co_present = build_co_present_note(persona.get("key", ""), now)
+    if co_present:
+        lines.append(co_present)
+
     if event_note:
         lines.append("")
         lines.append(event_note)
@@ -511,6 +658,12 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 중이다/도착했다 등)을 상상해서 덧붙이는 것, 지금 시간대와 안 맞는 관용구(예: 아침인데"
         " 밤에나 쓰는 '아직 안 자고 뭐 해' 같은 말)를 습관적으로 섞어 쓰는 것. 애매하면 화려하게"
         " 꾸미지 말고 주어진 사실만 담백하게 반영해 말한다.",
+
+        "- [자기모순 금지] 대화 기록 속 네 직전 발언과 지금 하려는 말이 서로 어긋나지 않는지 항상"
+        " 확인한다. 특히 선생님의 질문이 어떤 전제(예: '너땜에 깼어?', '자고 있었어?')를 깔고 있어도,"
+        " 그 전제가 네가 직전에 이미 말한 사실(예: 방금 '나 깼어, 일하고 있어'라고 답했음)과 어긋나면"
+        " 그 전제에 맞춰 새로 지어내거나 장단을 맞추지 말고, 이미 말한 사실을 그대로 유지한 채"
+        " 정정하거나 자연스럽게 넘긴다. 질문의 뉘앙스에 낚여서 방금 전 자기 말을 스스로 뒤집지 않는다.",
 
         "- [형식] 메신저답게 1~3개의 짧은 말풍선으로 나눠 답한다(한 말풍선은 너무 길지 않게)."
         " 해설, 지문, 따옴표, 영어 라벨 없이 '%s'가 실제로 보낼 대사만 쓴다." % name,

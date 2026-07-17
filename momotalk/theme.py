@@ -11,6 +11,11 @@ HEART_WHITE    = "#FFFFFF"
 BORDER_BLACK   = "#000000"
 BORDER_WHITE   = "#FFFFFF"
 BADGE_RED      = "#FF3B30"
+
+# [상태 점등] 학생 목록(학생소개 탭)의 아바타에 겹쳐 그리는 상태 표시등 색상.
+STATUS_AWAKE   = "#3DD16B"   # 초록: 지금 응답 가능(깨어있고 안 바쁨)
+STATUS_SLEEP   = "#B0B4BA"   # 회색: 취침중
+STATUS_BUSY    = "#FF3B30"   # 빨강: 부재중(일/알바 등으로 바쁨)
 BADGE_TEXT     = "#FFFFFF"
 
 # ────────────── 채팅창 색상 ──────────────

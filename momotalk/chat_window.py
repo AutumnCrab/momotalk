@@ -262,6 +262,8 @@ class ChatWindow(QWidget):
         self._msg_rows = {}
         self._msg_snippets = {}
         self._badges = {}              # key -> [배지 라벨들(메시지/학생 양쪽)]
+        self._status_dots = {}         # key -> 상태 점등 QLabel (학생소개 탭)
+        self._presence = {}            # key -> None/'sleep'/'busy' (마지막으로 받은 상태, 재구성 대비용)
         self._init_window()
         self._build_ui()
         self.refresh()
@@ -414,7 +416,7 @@ class ChatWindow(QWidget):
         page, v = self._list_scaffold("메시지", theme.LIST_BG)
         for ch in self.characters:
             v.addWidget(self._char_row(ch, ch["snippet"], self._msg_rows,
-                                       snippet_store=self._msg_snippets))
+                                       snippet_store=self._msg_snippets, show_status=True))
         v.addStretch(1)
         return page
 
@@ -422,11 +424,11 @@ class ChatWindow(QWidget):
         page, v = self._list_scaffold("학생 (%d)" % len(self.characters), theme.FRIEND_BG)
         for ch in self.characters:
             v.addWidget(self._char_row(ch, ch.get("intro") or "소개글 없음",
-                                       self._friend_rows))
+                                       self._friend_rows, show_status=True))
         v.addStretch(1)
         return page
 
-    def _char_row(self, ch, secondary, rows_dict, snippet_store=None):
+    def _char_row(self, ch, secondary, rows_dict, snippet_store=None, show_status=False):
         row = _Row(ch["key"])
         row.setCursor(Qt.PointingHandCursor)
         row.clicked.connect(self._select)
@@ -439,6 +441,25 @@ class ChatWindow(QWidget):
         av.setFixedSize(42, 42)
         av.setStyleSheet("background:transparent;")
         av.setPixmap(make_circular_avatar(ch["profile_img"], 42, ch["name"]))
+
+        if show_status:
+            # [상태 점등] 아바타 위에 작은 원을 겹쳐서 지금 응답 가능/취침중/부재중을 표시.
+            # 절대좌표(move)로 아바타 오른쪽 아래 모서리에 얹는 방식(오버레이 컨테이너).
+            av_wrap = QWidget()
+            av_wrap.setFixedSize(42, 42)
+            av_wrap.setStyleSheet("background:transparent;")  # 원형 밖 모서리에 각진 배경 안 비치게
+            av.setParent(av_wrap)
+            av.move(0, 0)
+            dot = QLabel(av_wrap)
+            dot.setFixedSize(12, 12)
+            dot.move(28, 28)
+            dot.setStyleSheet(
+                "background:%s;border-radius:6px;border:2px solid white;" % theme.STATUS_SLEEP
+            )
+            self._status_dots.setdefault(ch["key"], []).append(dot)
+            av_widget = av_wrap
+        else:
+            av_widget = av
 
         text_w = theme.LIST_W - 14 - 12 - 42 - 10 - 40   # 배지 자리(40) 확보
         tv = QVBoxLayout()
@@ -461,7 +482,7 @@ class ChatWindow(QWidget):
         )
         self._badges.setdefault(ch["key"], []).append(badge)
 
-        h.addWidget(av)
+        h.addWidget(av_widget)
         h.addLayout(tv, 1)
         h.addStretch(1)
         h.addWidget(badge, 0, Qt.AlignVCenter)
@@ -475,6 +496,19 @@ class ChatWindow(QWidget):
         for b in self._badges.get(key, []):
             b.setText(text)
             b.setVisible(count > 0)
+
+    def set_presence(self, key, status):
+        """모든 탭(메시지/학생소개)의 아바타 상태 점등을 갱신.
+        status: None(초록, 응답 가능) / 'sleep'(회색, 취침중) / 'busy'(빨강, 부재중).
+        main.py 가 주기적으로 호출해서 최신 상태를 밀어넣는다."""
+        self._presence[key] = status
+        color = {
+            None: theme.STATUS_AWAKE,
+            "sleep": theme.STATUS_SLEEP,
+            "busy": theme.STATUS_BUSY,
+        }.get(status, theme.STATUS_SLEEP)
+        for dot in self._status_dots.get(key, []):
+            dot.setStyleSheet("background:%s;border-radius:6px;border:2px solid white;" % color)
 
     def _build_conversation_panel(self):
         panel = QFrame()
