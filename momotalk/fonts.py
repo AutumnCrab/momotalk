@@ -8,11 +8,12 @@ assets/fonts/GyeonggiMillenniumTitle.ttf 를 불러와 Qt 에 등록하고,
 """
 
 import os
+from momotalk.paths import get_base_dir
 from PyQt5.QtGui import QFontDatabase
 
 from . import theme
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 FONT_PATH = os.path.join(BASE_DIR, "assets", "fonts", "GyeonggiMillenniumTitle.ttf")
 
 

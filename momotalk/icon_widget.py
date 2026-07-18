@@ -11,6 +11,7 @@
 
 import math
 import os
+from momotalk.paths import get_base_dir
 
 from PyQt5.QtWidgets import QWidget, QApplication, QMenu
 from PyQt5.QtCore import (
@@ -21,7 +22,7 @@ from PyQt5.QtGui import QPainter, QColor, QPainterPath, QFont, QPen, QPixmap
 
 from . import theme
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 LOGO_PNG = os.path.join(BASE_DIR, "assets", "momotalk.png")
 
 

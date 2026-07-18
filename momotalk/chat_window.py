@@ -9,6 +9,7 @@
 """
 
 import os
+from momotalk.paths import get_base_dir
 import datetime
 
 from PyQt5.QtWidgets import (
@@ -26,7 +27,7 @@ from PyQt5.QtGui import (
 from . import theme
 from .avatar import make_circular_avatar
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 
 
 def _asset(name):

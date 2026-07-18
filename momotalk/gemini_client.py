@@ -9,12 +9,13 @@ Gemini 호출 담당.
 """
 
 import os
+from momotalk.paths import get_base_dir
 import json
 import re
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"

@@ -9,11 +9,12 @@ Gemini에 보낼 [시스템 프롬프트 문자열] + [대화 히스토리]로 �
 """
 
 import os
+from momotalk.paths import get_base_dir
 import json
 import random
 import datetime
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 PROMPTS_DIR = os.path.join(BASE_DIR, "prompts")
 
 WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]  # datetime.weekday(): 월=0

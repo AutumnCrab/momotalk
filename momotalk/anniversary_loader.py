@@ -6,10 +6,11 @@
 """
 
 import os
+from momotalk.paths import get_base_dir
 import json
 import datetime
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 PATH = os.path.join(BASE_DIR, "anniversaries.json")
 
 DEFAULT = {

@@ -11,9 +11,10 @@
 """
 
 import os
+from momotalk.paths import get_base_dir
 import json
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 HISTORY_PATH = os.path.join(BASE_DIR, "chat_history.json")
 
 

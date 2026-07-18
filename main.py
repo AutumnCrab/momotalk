@@ -23,6 +23,7 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtWidgets import QApplication
 
+from momotalk.paths import get_base_dir
 from momotalk import theme
 from momotalk import persona_loader
 from momotalk import history_store
@@ -192,7 +193,7 @@ class MomoApp:
 
         # ▼▼ 트레이 아이콘 이미지: 여기를 바꾸면 트레이 그림이 바뀝니다 ▼▼
         tray_png = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "assets", "momotalk.png"
+            get_base_dir(), "assets", "momotalk.png"
         )
         # ▲▲ 기본값: assets/momotalk.png ▲▲
 
@@ -989,7 +990,7 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("모모톡")
-    _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "momotalk.png")
+    _icon_path = os.path.join(get_base_dir(), "assets", "momotalk.png")
     if os.path.exists(_icon_path):
         from PyQt5.QtGui import QIcon
         app.setWindowIcon(QIcon(_icon_path))

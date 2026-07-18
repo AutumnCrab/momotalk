@@ -13,9 +13,10 @@ JSON 의 'day' 값으로 쓸 수 있는 것:
 """
 
 import os
+from momotalk.paths import get_base_dir
 import json
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = get_base_dir()
 
 # 파이썬 datetime.weekday(): 월=0 ... 일=6
 _DAY_MAP = {
