@@ -1,0 +1,70 @@
+{
+  "집": {
+    "category": "집",
+    "entry_count": 105
+  },
+  "동아리실": {
+    "category": "학교",
+    "entry_count": 101
+  },
+  "학교": {
+    "category": "학교",
+    "entry_count": 45
+  },
+  "번지 산책로": {
+    "category": "야외",
+    "entry_count": 30
+  },
+  "시바세키 라멘집": {
+    "category": "식당",
+    "entry_count": 24
+  },
+  "사격장": {
+    "category": "학교",
+    "entry_count": 18
+  },
+  "운동장": {
+    "category": "학교",
+    "entry_count": 16
+  },
+  "식당": {
+    "category": "식당",
+    "entry_count": 10
+  },
+  "빈 교실": {
+    "category": "학교",
+    "entry_count": 9
+  },
+  "마트": {
+    "category": "상점",
+    "entry_count": 8
+  },
+  "아비도스 사막": {
+    "category": "야외",
+    "entry_count": 7
+  },
+  "카페": {
+    "category": "카페",
+    "entry_count": 6
+  },
+  "아비도스 순찰로": {
+    "category": "야외",
+    "entry_count": 5
+  },
+  "시장": {
+    "category": "상점",
+    "entry_count": 4
+  },
+  "슈퍼": {
+    "category": "상점",
+    "entry_count": 3
+  },
+  "자전거샵": {
+    "category": "상점",
+    "entry_count": 3
+  },
+  "빈 창고": {
+    "category": "학교",
+    "entry_count": 2
+  }
+}

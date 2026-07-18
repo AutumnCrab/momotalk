@@ -68,12 +68,38 @@ def _parse_hhmm(s):
     return int(h) * 60 + int(m)
 
 
-def current_activity(persona, now=None):
+def _entry_text(entry):
+    """activity 항목 하나(신규 dict {"text","place","with","tag"} 또는 구형 문자열)에서
+    사람이 읽는 설명 텍스트만 뽑는다. 하위호환용."""
+    if isinstance(entry, dict):
+        return entry.get("text", "")
+    return entry or ""
+
+
+def _entry_place(entry):
+    """신규 dict 항목이면 place(문자열 또는 None), 구형 문자열이면 None(구조화 정보 없음)."""
+    if isinstance(entry, dict):
+        return entry.get("place")
+    return None
+
+
+def _sorted_entries(day_map):
+    out = []
+    for t, entry in (day_map or {}).items():
+        try:
+            out.append((_parse_hhmm(t), t, entry))
+        except Exception:
+            continue
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def current_activity_entry(persona, now=None):
     """
-    persona['activity'][요일] = {"HH:MM": "행동", ...} 에서
-    지금 시각이 속한 구간(가장 최근에 시작된 항목)을 찾는다.
+    persona['activity'][요일] = {"HH:MM": entry, ...} 에서
+    지금 시각이 속한 구간(가장 최근에 시작된 항목)의 '원본 entry'를 찾는다(dict 또는 구형 문자열 그대로).
     자정을 넘겨 이어지는 경우(오늘 첫 항목보다 이른 시각)엔 어제의 마지막 항목을 이어서 본다.
-    반환: (시작시각 문자열, 설명) 또는 (None, None) (activity 필드가 없거나 못 찾은 경우)
+    반환: (시작시각 문자열, entry) 또는 (None, None).
     """
     if now is None:
         now = datetime.datetime.now()
@@ -81,24 +107,14 @@ def current_activity(persona, now=None):
     if not activity:
         return None, None
 
-    def _sorted_entries(day_map):
-        out = []
-        for t, desc in (day_map or {}).items():
-            try:
-                out.append((_parse_hhmm(t), t, desc))
-            except Exception:
-                continue
-        out.sort(key=lambda x: x[0])
-        return out
-
     wd = now.weekday()
     cur = now.hour * 60 + now.minute
 
     today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
     best = None
-    for mins, t, desc in today_entries:
+    for mins, t, entry in today_entries:
         if mins <= cur:
-            best = (t, desc)
+            best = (t, entry)
         else:
             break
     if best is not None:
@@ -107,9 +123,17 @@ def current_activity(persona, now=None):
     # 오늘 첫 항목보다 이른 시각(자정 근처)이면 어제의 마지막 항목이 이어지는 것으로 본다
     yest_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd - 1) % 7]))
     if yest_entries:
-        _, t, desc = yest_entries[-1]
-        return (t, desc)
+        _, t, entry = yest_entries[-1]
+        return (t, entry)
     return None, None
+
+
+def current_activity(persona, now=None):
+    """기존 호출부 하위호환용: (시작시각, 설명텍스트) 만 반환."""
+    t, entry = current_activity_entry(persona, now)
+    if entry is None:
+        return None, None
+    return t, _entry_text(entry)
 
 
 def recent_schedule_context(persona, now=None, hours=12):
@@ -127,16 +151,6 @@ def recent_schedule_context(persona, now=None, hours=12):
     if not activity:
         return ""
 
-    def _sorted_entries(day_map):
-        out = []
-        for t, desc in (day_map or {}).items():
-            try:
-                out.append((_parse_hhmm(t), t, desc))
-            except Exception:
-                continue
-        out.sort(key=lambda x: x[0])
-        return out
-
     wd = now.weekday()
     cur_abs = now.hour * 60 + now.minute            # 오늘=day 0 기준 절대 분(0~1439)
     window_start_abs = cur_abs - hours * 60          # 음수면 어제로 걸침
@@ -145,18 +159,18 @@ def recent_schedule_context(persona, now=None, hours=12):
     yest_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd - 1) % 7]))
 
     # 어제 항목은 절대 분 기준으로 -1440 오프셋(어제 00:00 = -1440)
-    combined = [(mins - 1440, t, desc) for mins, t, desc in yest_entries]
-    combined += [(mins, t, desc) for mins, t, desc in today_entries]
+    combined = [(mins - 1440, t, entry) for mins, t, entry in yest_entries]
+    combined += [(mins, t, entry) for mins, t, entry in today_entries]
     combined.sort(key=lambda x: x[0])
 
-    window = [(t, desc) for mins, t, desc in combined
+    window = [(t, entry) for mins, t, entry in combined
               if window_start_abs <= mins <= cur_abs]
     if not window:
         return ""
 
     lines = ["[최근 %d시간 흐름]" % hours]
-    for t, desc in window:
-        lines.append("  %s - %s" % (t, desc))
+    for t, entry in window:
+        lines.append("  %s - %s" % (t, _entry_text(entry)))
     return "\n".join(lines)
 
 
@@ -175,16 +189,6 @@ def upcoming_schedule_context(persona, now=None, hours=6):
     if not activity:
         return ""
 
-    def _sorted_entries(day_map):
-        out = []
-        for t, desc in (day_map or {}).items():
-            try:
-                out.append((_parse_hhmm(t), t, desc))
-            except Exception:
-                continue
-        out.sort(key=lambda x: x[0])
-        return out
-
     wd = now.weekday()
     cur_abs = now.hour * 60 + now.minute
     window_end_abs = cur_abs + hours * 60            # 1440 넘으면 내일로 걸침
@@ -192,19 +196,19 @@ def upcoming_schedule_context(persona, now=None, hours=6):
     today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
     tomo_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd + 1) % 7]))
 
-    combined = [(mins, t, desc) for mins, t, desc in today_entries]
-    combined += [(mins + 1440, t, desc) for mins, t, desc in tomo_entries]
+    combined = [(mins, t, entry) for mins, t, entry in today_entries]
+    combined += [(mins + 1440, t, entry) for mins, t, entry in tomo_entries]
     combined.sort(key=lambda x: x[0])
 
     # 지금 시각 이후에 '시작'하는 항목만 (지금 하는 일은 [지금 하는 일]에서 이미 다룸)
-    window = [(t, desc) for mins, t, desc in combined
+    window = [(t, entry) for mins, t, entry in combined
               if cur_abs < mins <= window_end_abs]
     if not window:
         return ""
 
     lines = ["[앞으로 %d시간 예정]" % hours]
-    for t, desc in window:
-        lines.append("  %s - %s" % (t, desc))
+    for t, entry in window:
+        lines.append("  %s - %s" % (t, _entry_text(entry)))
     return "\n".join(lines)
 
 
@@ -220,32 +224,15 @@ def _activity_markers(desc):
     return {"O": "(O)" in desc, "X": "(X)" in desc}
 
 
-def build_co_present_note(char_key, now=None):
-    """
-    [B: 맥락 공유] 지금 이 시각, 다른 학생들의 activity 텍스트를 훑어서
-    '같이 있을 가능성이 있는 사람'을 찾아 안내문으로 만든다.
-    판정 신호 세 가지(하나라도 맞으면 채택):
-      1. (O) 마커 겹침 — 둘 다 (O)(전원 공식 일정)면 같은 자리에 있다고 봐도 신뢰도 높음
-      2. (X) 마커 겹침 — 둘 다 (X)(교차 이벤트)면 서로 얽힌 장면일 가능성 높음
-      3. 이름 언급 — 상대 activity 텍스트에 내 이름이 나오거나, 내 activity 텍스트에 상대 이름이 나옴
-      4. 장소 키워드 겹침 — 서로의 activity 텍스트에 같은 장소성 단어(_PLACE_KEYWORDS)가 등장
-    완벽한 장소 필드가 없는 상태에서의 느슨한 추정이라, 반드시 '확정 아님' 뉘앙스로 안내한다.
-    반환: 안내 문자열, 또는 아무도 안 겹치면 "".
-    """
-    if now is None:
-        now = datetime.datetime.now()
-    me = load_persona(char_key)
-    if me is None:
-        return ""
-    _, my_desc = current_activity(me, now)
-    if not my_desc:
-        return ""
+def _co_present_legacy_estimate(char_key, me, my_desc, now):
+    """구형(문자열) activity 데이터용 폴백 추정. place 필드가 없을 때만 쓴다.
+    판정 신호(하나라도 맞으면 채택): (O)/(X) 마커 겹침, 이름 언급, 장소 키워드 겹침.
+    완벽한 장소 필드가 없는 상태에서의 느슨한 추정이라 신뢰도가 낮다."""
     my_name = _ADDRESS_TARGET_NAMES.get(char_key, char_key)
     my_places = {kw for kw in _PLACE_KEYWORDS if kw in my_desc}
     my_markers = _activity_markers(my_desc)
 
-    found = []
-    apart = []
+    found, apart = [], []
     for other_key in _STUDENT_KEYS:
         if other_key == char_key:
             continue
@@ -268,19 +255,80 @@ def build_co_present_note(char_key, now=None):
             found.append((other_name, other_desc))
         else:
             apart.append((other_name, other_desc))
+    return found, apart
 
+
+def build_co_present_note(char_key, now=None):
+    """
+    [B: 맥락 공유] 지금 이 시각, 다른 학생들과 같이 있는지를 판정해 안내문으로 만든다.
+    신규(구조화) 데이터: place 필드가 정확히 일치하면 '같이 있음' 확정(느슨한 추정 아님).
+    구형(문자열) 데이터가 남아있는 경우에 한해서만 기존 키워드/마커/이름 기반 추정으로 폴백한다.
+    반환: 안내 문자열, 또는 아무도 안 겹치면 "".
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    me = load_persona(char_key)
+    if me is None:
+        return ""
+    _, my_entry = current_activity_entry(me, now)
+    if my_entry is None:
+        return ""
+    my_desc = _entry_text(my_entry)
+    if not my_desc:
+        return ""
+    my_place = _entry_place(my_entry)
+
+    if my_place is not None:
+        # 신규 구조화 경로: place 정확 일치로 확정 판정(추정 아님)
+        my_name = _ADDRESS_TARGET_NAMES.get(char_key, char_key)
+        found, apart = [], []
+        for other_key in _STUDENT_KEYS:
+            if other_key == char_key:
+                continue
+            other = load_persona(other_key)
+            if other is None:
+                continue
+            _, other_entry = current_activity_entry(other, now)
+            if other_entry is None:
+                continue
+            other_desc = _entry_text(other_entry)
+            if not other_desc:
+                continue
+            other_name = _ADDRESS_TARGET_NAMES.get(other_key, other_key)
+            other_place = _entry_place(other_entry)
+            if other_place is not None and other_place == my_place:
+                found.append((other_name, other_desc))
+            else:
+                apart.append((other_name, other_desc))
+        return _render_co_present_note(found, apart, confirmed=True)
+
+    # 구형 문자열 데이터 폴백(하위호환)
+    found, apart = _co_present_legacy_estimate(char_key, me, my_desc, now)
+    return _render_co_present_note(found, apart, confirmed=False)
+
+
+def _render_co_present_note(found, apart, confirmed):
     if not found and not apart:
         return ""
 
     lines = []
     if found:
-        lines.append("[함께 있을 가능성이 있는 사람] (스케줄 텍스트 기반 느슨한 추정, 100% 확정 아님)")
+        if confirmed:
+            lines.append("[지금 같이 있는 사람] (같은 장소에 있는 것으로 확인됨)")
+        else:
+            lines.append("[함께 있을 가능성이 있는 사람] (스케줄 텍스트 기반 느슨한 추정, 100% 확정 아님)")
         for other_name, other_desc in found:
             lines.append("  %s: %s" % (other_name, other_desc))
-        lines.append(
-            "확실하지 않으면 단정짓지 말고, 대화 중 자연스럽게 참고만 한다(예: 그 사람 얘기가 나오면"
-            " 지금 상황을 아는 것처럼 반응해도 되지만, 굳이 먼저 나서서 확정적으로 언급하지 않는다)."
-        )
+        if confirmed:
+            lines.append(
+                "위 사람들은 지금 너와 실제로 같은 곳에 있다. 대화 중 자연스럽게 그 사실을 참고해도 된다"
+                "(예: 그 사람 얘기가 나오면 지금 옆에 있다는 걸 아는 것처럼 반응해도 된다)."
+            )
+        else:
+            lines.append(
+                "확실하지 않으면 단정짓지 말고, 대화 중 자연스럽게 참고만 한다(예: 그 사람 얘기가 나오면"
+                " 지금 상황을 아는 것처럼 반응해도 되지만, 굳이 먼저 나서서 확정적으로 언급하지 않는다)."
+            )
     if apart:
         if lines:
             lines.append("")
