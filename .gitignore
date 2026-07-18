@@ -3,6 +3,11 @@ config.json
 anniversaries.json
 chat_history.json
 
+# ── PyInstaller 빌드 산출물 (build_exe.bat으로 언제든 재생성 가능) ──
+dist/
+build/
+*.spec.bak
+
 # ── 파이썬 ──
 __pycache__/
 *.pyc

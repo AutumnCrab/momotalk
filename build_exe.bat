@@ -1,38 +1,48 @@
 @echo off
-chcp 65001 >nul
-echo === MomoTalk exe 빌드 시작 ===
+echo === MomoTalk build start ===
 
-REM 1) PyInstaller 설치 확인
-pip show pyinstaller >nul 2>&1
+python -m pip show pyinstaller >nul 2>&1
 if errorlevel 1 (
-    echo [설치] pyinstaller가 없어서 설치합니다...
-    pip install pyinstaller
+    echo [install] pyinstaller not found, installing...
+    python -m pip install pyinstaller
 )
 
-REM 2) 이전 빌드 정리
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 
-REM 3) 빌드 (onedir 모드)
-pyinstaller MomoTalk.spec
+python -m PyInstaller MomoTalk.spec
 
 if not exist dist\MomoTalk\MomoTalk.exe (
-    echo [실패] 빌드 결과물이 없습니다. 위 에러 메시지를 확인하세요.
+    echo [FAILED] build output not found. check the errors above.
     pause
     exit /b 1
 )
 
-REM 4) 데이터 파일들을 exe 옆으로 복사
-echo === 데이터 폴더 복사 중 ===
+echo === copying code-related data (always overwritten) ===
 xcopy /E /I /Y prompts dist\MomoTalk\prompts
 xcopy /E /I /Y data dist\MomoTalk\data
 xcopy /E /I /Y assets dist\MomoTalk\assets
-copy /Y config.json dist\MomoTalk\config.json
-copy /Y anniversaries.json dist\MomoTalk\anniversaries.json
-if exist chat_history.json copy /Y chat_history.json dist\MomoTalk\chat_history.json
+
+echo === seeding runtime files (only if missing, will NOT overwrite existing progress) ===
+if not exist dist\MomoTalk\config.json (
+    copy /Y config.json dist\MomoTalk\config.json
+    echo   config.json seeded - remember to put your API key in dist\MomoTalk\config.json
+) else (
+    echo   config.json already exists in dist, kept as-is
+)
+if not exist dist\MomoTalk\anniversaries.json (
+    if exist anniversaries.json copy /Y anniversaries.json dist\MomoTalk\anniversaries.json
+) else (
+    echo   anniversaries.json already exists in dist, kept as-is
+)
+if not exist dist\MomoTalk\chat_history.json (
+    if exist chat_history.json copy /Y chat_history.json dist\MomoTalk\chat_history.json
+) else (
+    echo   chat_history.json already exists in dist, kept as-is - your chat progress is safe
+)
 
 echo.
-echo === 완료! ===
-echo dist\MomoTalk\MomoTalk.exe 를 더블클릭하면 실행됩니다.
-echo 앞으로 prompts\*.json 이나 config.json 은 dist\MomoTalk\ 폴더 안의 파일을 직접 고치시면 됩니다.
+echo === DONE ===
+echo Run dist\MomoTalk\MomoTalk.exe
+echo Edit prompts\*.json inside dist\MomoTalk\ from now on - not the project root copy.
 pause
