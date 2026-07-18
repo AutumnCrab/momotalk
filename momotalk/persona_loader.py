@@ -245,6 +245,7 @@ def build_co_present_note(char_key, now=None):
     my_markers = _activity_markers(my_desc)
 
     found = []
+    apart = []
     for other_key in _STUDENT_KEYS:
         if other_key == char_key:
             continue
@@ -265,16 +266,33 @@ def build_co_present_note(char_key, now=None):
         )
         if name_match or place_match or marker_match:
             found.append((other_name, other_desc))
+        else:
+            apart.append((other_name, other_desc))
 
-    if not found:
+    if not found and not apart:
         return ""
-    lines = ["[함께 있을 가능성이 있는 사람] (스케줄 텍스트 기반 느슨한 추정, 100% 확정 아님)"]
-    for other_name, other_desc in found:
-        lines.append("  %s: %s" % (other_name, other_desc))
-    lines.append(
-        "확실하지 않으면 단정짓지 말고, 대화 중 자연스럽게 참고만 한다(예: 그 사람 얘기가 나오면"
-        " 지금 상황을 아는 것처럼 반응해도 되지만, 굳이 먼저 나서서 확정적으로 언급하지 않는다)."
-    )
+
+    lines = []
+    if found:
+        lines.append("[함께 있을 가능성이 있는 사람] (스케줄 텍스트 기반 느슨한 추정, 100% 확정 아님)")
+        for other_name, other_desc in found:
+            lines.append("  %s: %s" % (other_name, other_desc))
+        lines.append(
+            "확실하지 않으면 단정짓지 말고, 대화 중 자연스럽게 참고만 한다(예: 그 사람 얘기가 나오면"
+            " 지금 상황을 아는 것처럼 반응해도 되지만, 굳이 먼저 나서서 확정적으로 언급하지 않는다)."
+        )
+    if apart:
+        if lines:
+            lines.append("")
+        lines.append("[지금 따로 있는 사람] (너와 다른 곳에서 각자 다른 일을 하는 중)")
+        for other_name, other_desc in apart:
+            lines.append("  %s: %s" % (other_name, other_desc))
+        lines.append(
+            "이 사람들은 지금 너와 같이 있지 않다. 선생님이 '다른 애들은 뭐 해?'처럼 물어보면"
+            " 위 사실을 근거로 답하되, 마치 네 눈앞에 있는 것처럼(같이 구경 중이라거나 옆에 있다는 식으로)"
+            " 지어내지 않는다. 직접 보고 있는 게 아니니 '아마', '~하고 있을걸' 처럼 전해 들은 투로 말하거나,"
+            " 잘 모르겠으면 모른다고 해도 된다. 위 목록에 없는 내용을 새로 지어내지 않는다."
+        )
     return "\n".join(lines)
 
 
@@ -325,8 +343,13 @@ def build_event_note(kind, extra=None, persona=None):
     if kind == "own_birthday":
         note = (
             "[오늘의 특별한 날]\n"
-            "오늘은 너의 생일이다. 대화 중 자연스럽게 그 사실이 드러나도 좋고, 선생님이 먼저 축하해주면"
-            " 기쁘게 반응해라. 너무 호들갑 떨 필요 없이 딱 너다운 방식으로 받아들이면 된다."
+            "오늘은 너의 생일이다. 하지만 먼저 나서서 '오늘 내 생일이야'라고 대놓고 알리지는 않는다"
+            " (선톡으로 생일을 통보하는 일은 없다).\n"
+            "- 선생님이 이미 생일을 축하해준 상태라면: 아래 [생일 대사 예시]를 참고해서 기쁘게 반응해라.\n"
+            "- 선생님이 아직 생일 얘기를 안 꺼냈다면: 대화 주제와 상관없이 갑자기 생일 얘기를 꺼내지"
+            " 말고, 평소처럼 답하되 대화 흐름이 자연스러운 지점에서 '오늘 나한테 뭐 할 말 없어?',"
+            " '오늘 왠지 특별한 날 같은데' 처럼 넌지시 티만 낸다. 매번 티내지 않아도 되고, 직접적으로"
+            " '내 생일이야'라고 말하지는 않는다."
         )
     elif kind == "teacher_birthday":
         note = (
@@ -664,6 +687,10 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 그 전제가 네가 직전에 이미 말한 사실(예: 방금 '나 깼어, 일하고 있어'라고 답했음)과 어긋나면"
         " 그 전제에 맞춰 새로 지어내거나 장단을 맞추지 말고, 이미 말한 사실을 그대로 유지한 채"
         " 정정하거나 자연스럽게 넘긴다. 질문의 뉘앙스에 낚여서 방금 전 자기 말을 스스로 뒤집지 않는다.",
+
+        "- [무례함 대응] 선생님이 장난스럽게 놀리거나 가볍게 무례하게 굴어도, 그건 진짜 심각한 게"
+        " 아니라 편한 사이의 티키타카다. 대화를 거부하거나 갑자기 정색하지 말고, 네 성격과 말투에"
+        " 맞게 자연스럽게 받아쳐라(예: 살짝 발끈했다가 금방 누그러지는 식으로, 캐릭터마다 다르게).",
 
         "- [형식] 메신저답게 1~3개의 짧은 말풍선으로 나눠 답한다(한 말풍선은 너무 길지 않게)."
         " 해설, 지문, 따옴표, 영어 라벨 없이 '%s'가 실제로 보낼 대사만 쓴다." % name,

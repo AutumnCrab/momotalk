@@ -102,10 +102,6 @@ class MomoApp:
         # 완전히 동일한 메시지 묶음이 이 시간(초) 안에 다시 배달되면 중복으로 보고 막는다.
         # 예전엔 20초였는데, 원인 불명의 근접/원거리 중복 재발 방지를 위해 넉넉하게 늘림.
         self.DEDUPE_WINDOW_SEC = 120
-        # 배달 진단 로그 파일 경로(콘솔 로그와 별개로 파일에도 남겨서 나중에 원인 추적 가능하게 함)
-        self._debug_log_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "debug_delivery.log"
-        )
         self._last_delivered = {}    # key -> (직전에 배달한 메시지 묶음(tuple), 배달 시각) 중복 방지용
         self._last_spoken = {}       # key -> 마지막으로 그 학생 톡이 온 시각 (선톡 쿨다운용)
         self.PROACTIVE_COOLDOWN_SEC = 5 * 60   # 방금 무슨 톡이든 받은 학생은 이 시간 동안 선톡 쉼
@@ -260,10 +256,6 @@ class MomoApp:
 
 
     def on_message(self, char_key, messages, reason="unknown"):
-        # [진단 로그] 이 학생에게 '언제, 어떤 트리거로, 무슨 내용이' 배달 시도됐는지
-        # 밀리초 단위로 남긴다. 근접/원거리 중복이 재발하면 이 로그로 정확한 원인을 잡기 위함.
-        self._log_delivery(char_key, messages, reason)
-
         # 어떤 경로로든(선톡/기상답장/기념일 등이 겹치는 등) 방금 배달한 것과 완전히 같은
         # 메시지 묶음이 짧은 시간 안에 다시 들어오면 중복으로 보고 무시한다.
         now_ts = time.time()
@@ -272,7 +264,6 @@ class MomoApp:
         if last is not None and last[0] == batch and (now_ts - last[1]) < self.DEDUPE_WINDOW_SEC:
             print("[모모톡] 중복 메시지 감지 → 무시:", char_key, "| 이유:", reason,
                   "| 이전 배달과의 간격: %.1f초" % (now_ts - last[1]))
-            self._log_delivery(char_key, messages, reason, blocked=True)
             return
         self._last_delivered[char_key] = (batch, now_ts)
         self._last_spoken[char_key] = now_ts   # 선톡 쿨다운 판정용
@@ -282,18 +273,6 @@ class MomoApp:
             self._msg_queue.append((char_key, m, reason))
         if idle:
             self._begin_typing()
-
-    def _log_delivery(self, char_key, messages, reason, blocked=False):
-        """진단용 로그. 콘솔 + debug_delivery.log 파일에 남긴다(밀리초 타임스탬프 포함)."""
-        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        tag = "[차단됨]" if blocked else "[배달시도]"
-        preview = " / ".join(m[:20] for m in messages[:3])
-        line = "%s %s %s reason=%s msgs=%d | %s" % (ts, tag, char_key, reason, len(messages), preview)
-        try:
-            with open(self._debug_log_path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except Exception as e:
-            print("[진단 로그 기록 실패]", e)
 
     def _begin_typing(self):
         if not self._msg_queue:
@@ -398,9 +377,6 @@ class MomoApp:
         ev = self._event_schedule.get(char_key)
         if ev is not None:
             event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
-            if ev["kind"] == "own_birthday" and not ev["sent"]:
-                # 선생님이 먼저 말을 걸었으니, 예약해둔 '학생이 먼저 생일 알리기'는 취소
-                self._event_cancelled.add(char_key)
 
         system_prompt, contents = persona_loader.assemble(
             char_key, self.store.get(char_key, []), now=now, event_note=event_note
@@ -446,7 +422,10 @@ class MomoApp:
         self._sync_input_lock()
         if self.window is not None:
             self.window._typing_key = None
-        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="live_failed")
+        if error == "SAFETY_BLOCKED":
+            self.on_message(char_key, ["(부적절한 내용이 감지되어 응답할 수 없어요.)"], reason="live_blocked")
+        else:
+            self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="live_failed")
 
     def _check_live_timeout(self, worker, char_key):
         """일정 시간 안에 응답이 없으면 응답을 포기하고 UI 잠금을 풀어준다(무한 로딩 방지)."""
@@ -586,8 +565,6 @@ class MomoApp:
         if ev is not None:
             persona = persona_loader.load_persona(char_key)
             event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
-            if ev["kind"] == "own_birthday" and not ev["sent"]:
-                self._event_cancelled.add(char_key)   # 선생님이 자는 동안 보낸 톡에 답하는 것도 '대화 발생'으로 취급
 
         system_prompt, contents = persona_loader.assemble(
             char_key, self.store.get(char_key, []), wake_note=wake_note, event_note=event_note
@@ -622,7 +599,10 @@ class MomoApp:
             return
         print("[기상 답장 실패]", char_key, error)
         self.state.end(char_key)
-        self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="wake_failed")
+        if error == "SAFETY_BLOCKED":
+            self.on_message(char_key, ["(부적절한 내용이 감지되어 응답할 수 없어요.)"], reason="wake_blocked")
+        else:
+            self.on_message(char_key, ["지금은 답장하기 어려워요.", "잠시 후 다시 말 걸어줘요."], reason="wake_failed")
         self._poll_wake_continue()
 
     def _check_wake_timeout(self, worker, char_key):
@@ -832,6 +812,11 @@ class MomoApp:
                 continue
 
             self._event_participants_today.add(key)
+            if kind == "own_birthday":
+                # 자기 생일은 선제적으로 선톡하지 않는다(실시간 답장에서만 다룸) —
+                # 그래도 [오늘의 특별한 날] 사실은 필요하니 스케줄엔 등록해둔다(발송 시각은 의미 없음).
+                self._event_schedule[key] = {"kind": kind, "extra": extra, "at": None, "sent": True}
+                continue
             at = persona_loader.pick_random_awake_datetime(persona, today)
             if at is not None:
                 self._event_schedule[key] = {"kind": kind, "extra": extra, "at": at, "sent": False}
@@ -911,7 +896,11 @@ class MomoApp:
         self.icon.mark_as_read()
 
         if self.window is None:
-            self.window = ChatWindow(self.characters, self.store, self.unread)
+            self._refresh_daily_events()   # 오늘 생일 대상이 아직 계산 안 됐으면 지금 해둠
+            birthday_keys = {
+                k for k, ev in self._event_schedule.items() if ev["kind"] == "own_birthday"
+            }
+            self.window = ChatWindow(self.characters, self.store, self.unread, birthday_keys)
             self.window.message_sent.connect(self.on_user_message)
             # 학생 전환 시 입력창 잠금을 새 학생 상태에 맞춰 갱신
             self.window.selection_changed.connect(lambda k: self._sync_input_lock())

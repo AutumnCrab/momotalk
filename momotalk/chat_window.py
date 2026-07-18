@@ -250,11 +250,12 @@ class ChatWindow(QWidget):
     debug_proactive_requested = pyqtSignal()  # [디버그] F8: 깨어있는 학생 전원 대상 즉시 선톡 트리거
     typing_changed = pyqtSignal(str)   # 입력창에 실제 텍스트 변경(타이핑)이 있음 (char key)
 
-    def __init__(self, characters, store, unread=None):
+    def __init__(self, characters, store, unread=None, birthday_keys=None):
         super().__init__()
         self.characters = characters
         self.store = store
         self.unread = unread if unread is not None else {}
+        self.birthday_keys = birthday_keys or set()   # 오늘 생일인 학생 key 집합(정적, 하루 단위)
         self.selected_key = characters[0]["key"] if characters else None
         self.mode = "message"
         self._typing_key = None
@@ -458,6 +459,19 @@ class ChatWindow(QWidget):
                 "background:%s;border-radius:6px;border:2px solid white;" % theme.STATUS_SLEEP
             )
             self._status_dots.setdefault(ch["key"], []).append(dot)
+
+            if ch["key"] in self.birthday_keys:
+                # [생일 배지] 상태점(오른쪽 아래)과 안 겹치게 왼쪽 위 모서리에 케이크 아이콘.
+                # 하루 단위라 굳이 동적 갱신 안 하고, 창 만들 때 한 번만 표시.
+                cake = QLabel("🎂", av_wrap)
+                cake.setFixedSize(18, 18)
+                cake.move(-3, -3)
+                cake.setAlignment(Qt.AlignCenter)
+                # 앱 전체 커스텀 폰트(GyeonggiTitle 등)엔 이모지 글리프가 없어서 깨져 보임.
+                # 이 배지만 Windows 기본 컬러 이모지 폰트로 강제 지정해서 제대로 그려지게 함.
+                cake.setFont(QFont("Segoe UI Emoji", 10))
+                cake.setStyleSheet("background:transparent;")
+
             av_widget = av_wrap
         else:
             av_widget = av
