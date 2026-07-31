@@ -186,7 +186,7 @@
         "tag": "O"
       },
       "18:00": {
-        "text": "하교 후 친구들과 카페에서 수다 [하교 18:00]",
+        "text": "하교 후 혼자 카페에 들러 여유롭게 시간을 보냄 [하교 18:00]",
         "place": "카페",
         "with": [],
         "tag": null
@@ -285,7 +285,13 @@
         "text": "학교 청소 및 운동장 점검 (O)",
         "place": "운동장",
         "with": [],
-        "tag": "O"
+        "tag": "O",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비/눈으로 운동장 점검 보류. 실내 청소 및 비품 정리로 대체 (O)",
+          "place": "동아리실",
+          "tag": "O"
+        }
       },
       "12:00": {
         "text": "점심 식사",
@@ -367,7 +373,13 @@
         "text": "사격 훈련 및 주특기 훈련 (O)(W)",
         "place": "사격장",
         "with": [],
-        "tag": "O"
+        "tag": "O",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "악천후로 실외 사격 훈련 취소. 실내에서 기본기 훈련(사격 자세·장비 조작 숙달) (O)",
+          "place": "동아리실",
+          "tag": "O"
+        }
       },
       "16:30": {
         "text": "훈련 사후 점검(AAR) (O)",
@@ -420,7 +432,7 @@
         "tag": null
       },
       "15:00": {
-        "text": "친구들과 놀러 다님. 사진 찍기",
+        "text": "집에서 그동안 찍은 사진 정리하며 여유로운 시간을 보냄",
         "place": "집",
         "with": [],
         "tag": null
@@ -449,7 +461,13 @@
         "text": "주변 번지 산책",
         "place": "번지 산책로",
         "with": [],
-        "tag": null
+        "tag": null,
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "날씨가 궂어 산책은 접고 집에서 쉼",
+          "place": "집",
+          "tag": null
+        }
       },
       "11:00": {
         "text": "산책 중 세리카·아야네·호시노와 조우 (X)",
@@ -459,7 +477,13 @@
           "serika",
           "ayane"
         ],
-        "tag": "X"
+        "tag": "X",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비가 와서 산책 대신 카페에서 다 같이 합류 (X)",
+          "place": "카페",
+          "tag": "X"
+        }
       },
       "12:00": {
         "text": "다 같이 카페. 라이딩 중인 시로코를 발견해 동행 (X)",

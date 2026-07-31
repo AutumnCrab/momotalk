@@ -299,7 +299,13 @@
         "text": "학교 청소 및 운동장 점검. 안전 진단 (O)",
         "place": "운동장",
         "with": [],
-        "tag": "O"
+        "tag": "O",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비/눈으로 운동장 점검 보류. 실내 청소 및 비품 정리로 대체 (O)",
+          "place": "동아리실",
+          "tag": "O"
+        }
       },
       "12:00": {
         "text": "점심 식사",
@@ -381,7 +387,13 @@
         "text": "사격 훈련. 오퍼레이팅 및 차량 담당 (O)(W)",
         "place": "사격장",
         "with": [],
-        "tag": "O"
+        "tag": "O",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "악천후로 실외 사격 훈련 취소. 실내에서 기본기 훈련(사격 자세·장비 조작 숙달) (O)",
+          "place": "동아리실",
+          "tag": "O"
+        }
       },
       "16:30": {
         "text": "훈련 사후 점검(AAR). 기록 담당 (O)",
@@ -469,7 +481,13 @@
         "text": "주변 번지 산책",
         "place": "번지 산책로",
         "with": [],
-        "tag": null
+        "tag": null,
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "날씨가 궂어 산책은 접고 집에서 쉼",
+          "place": "집",
+          "tag": null
+        }
       },
       "11:00": {
         "text": "산책 중 노노미·세리카·호시노와 조우 (X)",
@@ -479,7 +497,13 @@
           "serika",
           "nonomi"
         ],
-        "tag": "X"
+        "tag": "X",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비가 와서 산책 대신 카페에서 다 같이 합류 (X)",
+          "place": "카페",
+          "tag": "X"
+        }
       },
       "12:00": {
         "text": "다 같이 카페. 라이딩 중인 시로코를 발견해 동행 (X)",

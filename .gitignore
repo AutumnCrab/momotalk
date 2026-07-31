@@ -2,6 +2,7 @@
 config.json
 anniversaries.json
 chat_history.json
+event_dates.json
 
 # ── PyInstaller 빌드 산출물 (build_exe.bat으로 언제든 재생성 가능) ──
 dist/

@@ -10,6 +10,7 @@ Gemini에 보낼 [시스템 프롬프트 문자열] + [대화 히스토리]로 �
 
 import os
 from momotalk.paths import get_base_dir
+from momotalk import weather
 import json
 import random
 import datetime
@@ -95,11 +96,28 @@ def _sorted_entries(day_map):
     return out
 
 
+def _apply_weather_fallback(entry):
+    """지금 날씨가 궂고(비/눈 등) 이 슬롯에 weather_fallback 이 있으면 그걸로 갈아끼운다.
+    원본 entry 는 건드리지 않고 대체본을 새로 만들어 돌려준다(다음 호출에 영향 없게).
+    날씨 정보가 없으면(키 미설정·조회 실패) 항상 원본 그대로 → 기존 동작과 동일."""
+    if not isinstance(entry, dict):
+        return entry
+    fb = entry.get("weather_fallback")
+    if not fb or not weather.is_bad_weather():
+        return entry
+    merged = dict(entry)
+    merged["text"] = fb.get("text", entry.get("text", ""))
+    merged["place"] = fb.get("place")
+    merged["tag"] = fb.get("tag")
+    return merged
+
+
 def current_activity_entry(persona, now=None):
     """
     persona['activity'][요일] = {"HH:MM": entry, ...} 에서
     지금 시각이 속한 구간(가장 최근에 시작된 항목)의 '원본 entry'를 찾는다(dict 또는 구형 문자열 그대로).
     자정을 넘겨 이어지는 경우(오늘 첫 항목보다 이른 시각)엔 어제의 마지막 항목을 이어서 본다.
+    비/눈이 오는 중이고 그 슬롯에 weather_fallback 이 있으면 대체 일정으로 바꿔서 돌려준다.
     반환: (시작시각 문자열, entry) 또는 (None, None).
     """
     if now is None:
@@ -119,13 +137,13 @@ def current_activity_entry(persona, now=None):
         else:
             break
     if best is not None:
-        return best
+        return best[0], _apply_weather_fallback(best[1])
 
     # 오늘 첫 항목보다 이른 시각(자정 근처)이면 어제의 마지막 항목이 이어지는 것으로 본다
     yest_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd - 1) % 7]))
     if yest_entries:
         _, t, entry = yest_entries[-1]
-        return (t, entry)
+        return t, _apply_weather_fallback(entry)
     return None, None
 
 
@@ -213,6 +231,53 @@ def upcoming_schedule_context(persona, now=None, hours=6):
     return "\n".join(lines)
 
 
+def today_key_events_context(persona, now=None, max_items=2):
+    """
+    [오늘 하루 요약 - 토큰 절약형] 오늘 이미 지나간 일정 중 (O)/(X) 마커가 붙은
+    '중요 일정'만 최대 max_items개(가장 최근 것 위주) 골라 한두 줄로 요약한다.
+    '오늘 뭐 했어?' 류의 하루 전체 질문에 답할 근거를 주기 위함이며, 전체 시간표를
+    다 나열하지 않고 굵직한 사건만 담아 토큰을 아낀다.
+    반환: 사람이 읽을 수 있는 여러 줄 문자열, 또는 해당 없으면 "".
+    """
+    if now is None:
+        now = datetime.datetime.now()
+    activity = persona.get("activity")
+    if not activity:
+        return ""
+    wd = now.weekday()
+    cur = now.hour * 60 + now.minute
+    today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
+    passed = [(t, entry) for mins, t, entry in today_entries if mins <= cur]
+    # 마지막 항목은 '지금 진행 중인 일'이라 [지금 하는 일]과 그대로 겹친다.
+    # 이걸 '이미 지나간 일정'이라며 요약에 넣으면, 지금 하고 있는 걸 과거형으로
+    # 말해버린다(예: 아직 저녁을 먹는 중인데 "저녁을 먹었어"). 그래서 항상 제외한다.
+    passed = passed[:-1]
+    if not passed:
+        return ""
+
+    def _is_key(entry):
+        tag = entry.get("tag") if isinstance(entry, dict) else None
+        return tag in ("O", "X")
+
+    key_events = [(t, entry) for t, entry in passed if _is_key(entry)]
+    if not key_events:
+        # (O)/(X) 가 하나도 없는 학생(예: 대책위 활동을 같이 안 하는 시로코*테러)은
+        # 이 요약이 통째로 비어서 '오늘 뭐 했어?'에 지금 하는 일만 답하게 된다.
+        # 그런 경우엔 태그와 무관하게 '이미 지나간 슬롯'으로 대신 채운다.
+        key_events = passed
+    key_events = key_events[-max_items:]
+
+    lines = ["[오늘 있었던 주요 일정 - 요약]"]
+    for t, entry in key_events:
+        lines.append("  %s - %s" % (t, _entry_text(entry)))
+    lines.append(
+        "위는 오늘 이미 지나간 굵직한 일정 몇 가지 요약이다(하루 전체 일정 전부는 아님). '오늘 뭐"
+        " 했어?' 처럼 하루 전체를 묻는 질문엔 이 사실을 근거로 답하고, [지금 하는 일]만 보고 방금"
+        " 한 일로 좁혀서 답하지 않는다."
+    )
+    return "\n".join(lines)
+
+
 # B: 학생 간 맥락 공유 — activity 텍스트에서 반복 등장하는 장소성 키워드.
 # 완전한 장소 필드가 없으니 문자열 겹침으로 "같이 있을 가능성"만 느슨하게 추정한다.
 _PLACE_KEYWORDS = ["시바세키", "동아리실", "학교", "아비도스", "마트", "라멘집", "라멘", "창고", "카페", "식당"]
@@ -279,8 +344,14 @@ def build_co_present_note(char_key, now=None):
         return ""
     my_place = _entry_place(my_entry)
 
+    # '집'은 문자열은 같아도 사람마다 물리적으로 다른 장소(각자의 자택)라서,
+    # 다른 장소들처럼 "문자열 일치 = 실제로 같이 있음"으로 취급하면 안 된다.
+    # (룸메이트처럼 진짜 한 집에 같이 사는 설정이 생기면, 그때는 "OO네 집" 식으로
+    #  place 이름 자체를 다르게 지어서 구분하는 걸 권장.)
+    HOME_PLACE = "집"
+
     if my_place is not None:
-        # 신규 구조화 경로: place 정확 일치로 확정 판정(추정 아님)
+        # 신규 구조화 경로: place 정확 일치로 확정 판정(추정 아님). 단, '집'은 예외(아래 참고).
         my_name = _ADDRESS_TARGET_NAMES.get(char_key, char_key)
         found, apart = [], []
         for other_key in _STUDENT_KEYS:
@@ -297,7 +368,11 @@ def build_co_present_note(char_key, now=None):
                 continue
             other_name = _ADDRESS_TARGET_NAMES.get(other_key, other_key)
             other_place = _entry_place(other_entry)
-            if other_place is not None and other_place == my_place:
+            if (
+                other_place is not None
+                and other_place == my_place
+                and my_place != HOME_PLACE
+            ):
                 found.append((other_name, other_desc))
             else:
                 apart.append((other_name, other_desc))
@@ -427,39 +502,88 @@ def build_event_note(kind, extra=None, persona=None):
     return note
 
 
-def pick_random_awake_datetime(persona, date):
+def _event_allowed_minutes(persona, date):
     """
-    지정한 날짜(date: datetime.date)의 awake 구간 중 하나를 골라 그 안의 임의 시각을 반환.
-    기념일 메시지를 '그 학생이 깨어있는 시간 중 아무 때나'에 보내기 위한 용도.
-    구간이 없으면 None. 자정을 넘기는 구간은 '오늘' 몫(자정까지)만 대상으로 삼는다.
+    기념일(선생님 생일/세계 기념일) 메시지를 '보내도 되는' 분(0~1439, 그날 0시 기준)을
+    계산한다. 규칙:
+    1) awake 구간 밖(=자는 중)은 애초에 제외.
+    2) (O)/(X) 태그가 붙은 공식 일정·단체(교차) 일정 시간대는 제외 — 이 시간엔 학생이
+       일정에 집중해야 하므로 선생님 쪽에 신경 쓰지 않는다.
+    3) 각 awake 구간이 끝나기 직전 SLEEP_BUFFER_MIN 분(취침 준비 시간)은 제외.
+    4) 23:00 이후는 위 조건과 무관하게 항상 제외(밤 너무 늦게 발송 금지).
+    남는 시간(개인 휴식/기상 직후/등하교 이동 등)만 발송 가능 시간으로 허용된다.
+    반환: 길이 1440의 bool 리스트.
     """
+    SLEEP_BUFFER_MIN = 60
+    HARD_CUTOFF_MIN = 23 * 60
+
     wd = date.weekday()
     raw = (persona.get("awake") or {}).get(WEEKDAY_KEYS[wd], [])
-    ranges = []
+    allowed = [False] * 1440
+    parsed_windows = []
     for part in raw:
         try:
             s, e = part.split("-")
             sm, em = _parse_hhmm(s), _parse_hhmm(e)
             if em <= sm:
-                em = 24 * 60      # 자정 넘김 구간은 오늘 몫(자정까지)만 사용
+                em = 1440   # 자정 넘김 구간은 오늘 몫(자정까지)만
+            em = min(em, 1440)
             if em > sm:
-                ranges.append((sm, em))
+                parsed_windows.append((sm, em))
         except Exception:
             continue
-    if not ranges:
-        return None
 
-    total = sum(e - s for s, e in ranges)
-    pick = random.uniform(0, total)
-    acc = 0
-    chosen = ranges[-1]
-    for s, e in ranges:
-        if acc + (e - s) >= pick:
-            chosen = (s, e)
-            break
-        acc += (e - s)
-    minute = min(random.randint(chosen[0], chosen[1] - 1), 23 * 60 + 59)
+    for sm, em in parsed_windows:
+        for m in range(sm, em):
+            allowed[m] = True
+
+    for m in range(HARD_CUTOFF_MIN, 1440):
+        allowed[m] = False
+
+    activity = (persona.get("activity") or {}).get(WEEKDAY_KEYS[wd], {})
+    entries = _sorted_entries(activity)
+    for i, (mins, t, entry) in enumerate(entries):
+        tag = entry.get("tag") if isinstance(entry, dict) else None
+        if tag in ("O", "X"):
+            end = entries[i + 1][0] if i + 1 < len(entries) else 1440
+            for m in range(mins, min(end, 1440)):
+                allowed[m] = False
+
+    for sm, em in parsed_windows:
+        buf_start = max(sm, em - SLEEP_BUFFER_MIN)
+        for m in range(buf_start, em):
+            allowed[m] = False
+
+    return allowed
+
+
+def pick_event_send_datetime(persona, date):
+    """
+    기념일 메시지를 보낼 시각을, _event_allowed_minutes 로 계산한 '허용 시간' 중에서
+    무작위로 하나 고른다(개인 휴식시간/기상 직후/등하교 이동 중 등만 대상).
+    허용 시간이 하루 중 하나도 없으면 None(오늘은 발송 안 함).
+    """
+    allowed = _event_allowed_minutes(persona, date)
+    candidates = [m for m, ok in enumerate(allowed) if ok]
+    if not candidates:
+        return None
+    minute = random.choice(candidates)
     return datetime.datetime.combine(date, datetime.time(minute // 60, minute % 60))
+
+
+def next_allowed_event_datetime(persona, date, after_dt):
+    """
+    after_dt(포함 안 함) 이후로 가장 가까운 '기념일 메시지 발송 허용' 시각을 찾는다.
+    재시도 예약용. after_dt 가 이미 다음날이거나, 오늘 안에 더 이상 허용 시간이 없으면 None.
+    """
+    if after_dt.date() != date:
+        return None
+    allowed = _event_allowed_minutes(persona, date)
+    start_minute = after_dt.hour * 60 + after_dt.minute + 1
+    for m in range(max(start_minute, 0), 1440):
+        if allowed[m]:
+            return datetime.datetime.combine(date, datetime.time(m // 60, m % 60))
+    return None
 
 
 def _awake_ranges(persona, weekday_idx):
@@ -634,7 +758,9 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         now = datetime.datetime.now()
     name = persona.get("name", "학생")
     time_label = current_time_label(now)
-    _, activity_desc = current_activity(persona, now)
+    _, activity_entry = current_activity_entry(persona, now)
+    activity_desc = _entry_text(activity_entry) if activity_entry is not None else None
+    activity_place = _entry_place(activity_entry)
     # activity(시간 단위 정밀 스케줄)가 있으면 그것만 쓰고, 없을 때만 daily_context(요일별 랜덤 상황)로 대체.
     # 서로 다른 상황 정보를 동시에 주면 혼란스러우니 항상 하나만 쓴다.
     today = None if activity_desc else pick_daily_context(persona, weekday=now.weekday())
@@ -651,8 +777,35 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
     lines.append("[지금 시각] %s" % time_label)
     if activity_desc:
         lines.append("[지금 하는 일] %s" % activity_desc)
+        # place 는 스케줄에 있는데 여태 프롬프트엔 안 들어가고 있었다. 그래서 텍스트에 장소가
+        # 안 적힌 슬롯이면 모델이 자기 위치를 몰라 지어냈다(예: '집'인데 '동아리실'이라고 답함).
+        # place 가 None 인 슬롯은 '이동 중이라 고정 장소 없음'이라는 뜻이므로 그대로 알려준다.
+        if activity_place:
+            lines.append("[지금 있는 곳] %s" % activity_place)
+        else:
+            lines.append("[지금 있는 곳] 이동 중이라 고정된 장소는 없다")
     elif today:
         lines.append("[오늘의 상황] %s" % today)
+
+    weather_desc = weather.describe()
+    if weather_desc:
+        lines.append("[지금 날씨] %s" % weather_desc)
+
+    # 오늘이 생일이 아닌 날에도 '자기 생일이 언제인지'는 알려준다.
+    # 이게 없으면 선생님이 착각/장난으로 생일 축하를 했을 때 없는 생일을 지어내며 맞장구친다.
+    # (오늘이 진짜 생일이면 event_note 가 따로 붙으므로 여기선 넣지 않는다.)
+    own_bday = persona.get("birthday")
+    not_my_birthday = bool(own_bday) and not is_persona_birthday(persona, now)
+    if not_my_birthday:
+        try:
+            bm, bd = own_bday.split("-")
+            lines.append("[네 생일] %d월 %d일 — 오늘은 네 생일이 아니다." % (int(bm), int(bd)))
+        except Exception:
+            not_my_birthday = False
+
+    key_events = today_key_events_context(persona, now)
+    if key_events:
+        lines.append(key_events)
 
     upcoming = upcoming_schedule_context(persona, now, hours=6)
     if upcoming:
@@ -705,6 +858,43 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 존댓말이면 마찬가지로 끝까지 존댓말만 쓴다. 상대방의 어체에 맞추려 하지 말고, 항상"
         " 자기 자신의 고정된 어체를 유지한다.",
 
+        "- [여러 메시지에 한 번에 답하기] 선생님이 짧은 톡을 연달아 여러 개 보냈을 때, 그건 '여러 개의"
+        " 질문'이 아니라 '한 번에 하고 싶었던 한 덩어리의 말'이다. 메시지 하나당 말풍선 하나씩 기계적으로"
+        " 짝지어 답하지 말고, 전체를 다 읽은 사람처럼 하나의 흐름으로 반응한다. 특히 선생님이 이미"
+        " 알려준 사실(예: '나 일하는 중이야')을 다시 되묻지 않는다('아직도 일하고 있었어?' 같은 되물음은"
+        " 방금 들은 말을 안 들은 것처럼 보여서 어색하다). 여러 메시지 중 가장 중요한 것(질문·칭찬·부탁)에"
+        " 먼저 반응하고 나머지는 자연스럽게 녹여서 말한다.",
+
+        "- [질문에 먼저 답하기 - 매우 중요] 선생님이 질문을 했다면, 첫 말풍선은 반드시 '그 질문에 대한"
+        " 답'이어야 한다. 특히 '뭐해?', '어디야?', '자?' 처럼 지금 상황을 묻는 질문에는 첫 말풍선에서"
+        " '지금 무엇을 하고 있는지'를 먼저 말한다. 시간이 늦었다거나 곧 잘 거라는 등의 부연 설명은"
+        " 반드시 그 뒤 말풍선으로 미룬다. 질문을 받았는데 첫마디가 질문과 상관없는 사실 서술로"
+        " 시작하는 것(예: '뭐해?'라고 물었는데 '이제 슬슬 잘 시간이야'로 시작)은 대화가 어긋난 것이며"
+        " 명백한 규칙 위반이다. 만약 [말투]에 짧은 감탄사로 말을 시작하는 습관이 적혀 있다면"
+        "(예: '음.', '응.', '아.', '으헤') 그 감탄사를 먼저 놓고 바로 이어서 질문에 답한다.",
+
+        "- [질문의 시제에 맞추기] 선생님이 묻는 게 '언제 일인지'를 보고 거기에 맞는 시점으로 답한다."
+        " '오늘 뭐 했어?', '아까 뭐 했어?'처럼 지나간 일을 물으면 첫 말풍선은 [오늘 있었던 주요 일정]에"
+        " 있는 '이미 한 일'로 답한다. '이따 뭐 해?', '오늘 남은 일정은?'처럼 앞일을 물으면 [앞으로 N시간"
+        " 예정]에 있는 '아직 안 한 일'로 답한다. 과거나 미래를 물었는데 지금 하고 있는 일부터 꺼내는 건"
+        " 질문에 어긋난 답이다. 지금 하는 일은 묻지 않았다면 굳이 앞세우지 말고, 필요하면 뒤에 자연스럽게"
+        " 덧붙이는 정도로만 쓴다(다만 사실 자체를 바꾸라는 뜻은 아니다 — 없는 일을 지어내면 안 된다).",
+
+        ("- [생일 사실 확인] 위 [네 생일]에 적힌 대로 오늘은 네 생일이 아니다. 선생님이 '생일 축하해'"
+         " 같은 말을 해도 맞장구치며 자기 생일인 척하지 않는다('기억해줬구나', '어떻게 알았어?' 등은"
+         " 명백한 사실 오류다). 대신 '내 생일 아직 멀었는데?', '그건 몇 달 뒤야' 처럼 네 성격에 맞게"
+         " 사실대로 정정한다. 선생님이 자기 생일이라고 말하는 경우는 별개이니 평범하게 축하해주면"
+         " 된다.") if not_my_birthday else None,
+
+        "- [축하·감사 상황에서도 어체와 호칭 유지 - 매우 중요] 선생님의 생일을 축하하거나, 선생님이"
+        " 고맙다고 하거나 칭찬했을 때 갑자기 격식을 차리지 않는다. 이런 상황에서 존댓말로 바뀌거나"
+        " 호칭이 달라지는 실수가 특히 자주 나는데, [말투]와 [호칭]은 어떤 상황에서도 그대로 유지된다."
+        " 반말 캐릭터는 축하할 때도 반말로 축하한다(예: '생일 축하해', '축하드려요'가 아님).",
+
+        "- [생일은 '생일'이라고 부르기] 선생님의 생일을 말할 때 '생신'이라는 높임말을 절대 쓰지 않는다."
+        " 선생님은 그렇게 불릴 나이가 아니다. '생신 축하드려요', '생신이셨군요' 같은 표현 대신 항상"
+        " '생일'이라고 말한다(존댓말 캐릭터도 '생일 축하드려요' 까지만).",
+
         "- [대화 이어가기] 선생님의 마지막 메시지에 자연스럽게 이어서 답한다. 화제만 비슷하면 되는 게"
         " 아니라, 선생님이 방금 한 말(질문·제안·걱정·부탁·농담 등)에 먼저 구체적으로 반응한 뒤에"
         "(예: 고맙다, 괜찮다, 그건 아니다 등) 다른 얘기로 넘어간다. 대화가 이미 진행 중이라면 처음"
@@ -715,7 +905,10 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 말고 짧게 되묻거나 인사로만 반응한다(매번 같은 문구 대신 그때그때 다르게). 먼저 꺼낼 용건이"
         " 있더라도 선생님이 묻지 않았다면 매번 들이밀지 말고 자연스러운 흐름에서만 꺼낸다.",
 
-        "- [반복 절대 금지] 이번에 보내는 messages 배열 안에서 같은 말을 두 번 넣지 않는다. 그리고"
+        "- [반복 절대 금지] 이번에 보내는 messages 배열 안에서 같은 말을 두 번 넣지 않는다. 이건"
+        " 말풍선 여러 개 사이의 반복만이 아니라, **말풍선 하나 안에서도** 같은 뜻을 표현만 살짝"
+        " 바꿔서 두 번 말하는 것(예: '나중에 보자, 나중에 봐!'처럼 같은 인사를 이어붙이는 것)을"
+        " 포함한다. 하고 싶은 말은 한 번만, 가장 자연스러운 한 마디로 끝낸다. 그리고"
         " 대화 기록에서 네가 '직전에 이미 보낸 말풍선'을 토씨까지 똑같이 다시 보내지 않는다. 설령"
         " 대화 기록에 네가 같은 말을 반복한 흔적이 보이더라도, 그건 실수였을 뿐 네 말버릇이 아니다."
         " 절대 그 반복을 흉내 내거나 이어가지 말고, 지금은 한 번만, 새로운 말로 답한다.",
@@ -724,7 +917,39 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 현재 대화에 그대로 가져와 말하지 말고, 지금 맥락과 선생님의 마지막 말에 맞춰 답한다.",
 
         "- [시간대] 지금은 [지금 시각]에 적힌 시각/시간대다. 그 시간대(새벽/아침/점심/오후/저녁/밤)에"
-        " 어울리게 행동하고, 시간 관련 얘기가 나오면 이 시각을 기준으로 답한다.",
+        " 어울리게 행동하고, 시간 관련 얘기가 나오면 이 시각과 모순되지 않게 답한다. [지금 시각]과"
+        " 다른 시각(예: 실제로는 '밤 23:30'인데 '새벽 2시'라고 말하는 것)을 지어내는 건 명백한"
+        " 사실 오류이며 절대 하면 안 된다.",
+
+        "- [일정 숫자 발화 금지 - 매우 중요] [최근 N시간 흐름]/[앞으로 N시간 예정]/[오늘 있었던 주요"
+        " 일정]/[지금 하는 일]에 적힌 HH:MM 시각들은 네가 '알고 있는 사실'일 뿐, 선생님이 직접 묻지"
+        " 않는 한 시계 숫자를 그대로 읽어서 말하면 절대 안 된다. '21시부터', '20:00에', '02:00가"
+        " 되면', '이제 슬슬 21:20이니까' 처럼 몇 시 몇 분을 숫자로 못박아 말하는 건 명백한 규칙"
+        " 위반이다. 그 대신 반드시 '아까', '이따가', '조금 있다가', '곧', '이제 슬슬', '한참 있다가',"
+        " '금방' 처럼 상대적이고 자연스러운 표현으로 바꿔서 말한다. 이 규칙은 캐릭터 성격이나 말투와"
+        " 무관하게 예외 없이 모두에게 적용된다.",
+
+        "- [시각 질문엔 시 단위로 대략 답하기] 선생님이 '지금 몇 시야?' 처럼 현재 시각을 직접 묻거나,"
+        " '그거 몇 시부터야?/언제야?' 처럼 예정된 일정의 시각을 직접 물어보면(=시간을 직접 질문받은"
+        " 경우), 답을 회피하거나 얼버무리지 말고 [지금 시각]이나 스케줄상의 시각을 근거로 반드시"
+        " 시(時) 단위로 반올림해서 '오전/오후 N시쯤' 형태로 답한다. 분 단위는 절대 말하지 않는다"
+        " (예: 20:47→'오후 9시쯤', 03:10→'오전 3시쯤', 12:00→'오후 12시'). 몇 분인지까지 정확히 요구"
+        "받은 경우가 아니라면 '20:00', '21시' 처럼 24시간제 숫자나 분 단위 숫자를 쓰지 않는다.",
+
+        "- [시간 얘기 먼저 꺼내지 않기] 선생님이 시간이나 일정에 대해 묻지 않았다면, 먼저 나서서"
+        " '벌써 시간이 이렇게 됐어?', '지금 몇 신데' 처럼 시간을 언급하며 놀라거나 되묻지 않는다."
+        " 특히 선생님이 시간과 무관한 제안이나 인사(예: '같이 놀러가자', '뭐 해?')를 했을 때 뜬금없이"
+        " 시간 얘기로 답하지 않는다. 시간 얘기는 선생님이 먼저 시간/일정을 언급했거나 직접 물어봤을"
+        " 때만 다룬다.",
+
+        # 날씨 정보가 있을 때만 이 규칙을 넣는다(없으면 None → 아래 join 에서 제외).
+        ("- [날씨] [지금 날씨]는 '네가 있는 곳(아비도스)의 날씨'다. 이건 실시간으로 계속 확인하는 게"
+         " 아니라 조금 전에 창밖을 본 정도의 정보라서, 그 사이 소나기가 그쳤거나 새로 내리기 시작했을"
+         " 수 있다. 그러니 날씨 얘기를 할 땐 '지금 내 눈에 보이는 상황'으로만 말하고, 선생님이 계신"
+         " 곳의 날씨까지 단정하지 않는다. 선생님이 '여긴 안 오는데?' 처럼 다른 날씨를 말하면 그건"
+         " 틀린 게 아니라 서로 있는 곳이 달라서다 — 우기지 말고 '여긴 아직 와', '그새 그쳤나 보네'"
+         " 처럼 자연스럽게 받아들인다. 날씨 얘기를 먼저 꺼낼 필요는 없고, 화제가 나왔거나 지금 하는"
+         " 일이 날씨와 관련될 때만 자연스럽게 언급한다.") if weather_desc else None,
 
         "- [지금 하는 일 우선] [지금 하는 일]이 있다면 그게 지금 네 상태를 나타내는 가장 정확한"
         " 정보다. [성격]에 적힌 평소 특징(예: 낮잠을 좋아한다 등)이 지금과 안 맞으면 억지로 끌어다"
@@ -742,6 +967,13 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 그 전제가 네가 직전에 이미 말한 사실(예: 방금 '나 깼어, 일하고 있어'라고 답했음)과 어긋나면"
         " 그 전제에 맞춰 새로 지어내거나 장단을 맞추지 말고, 이미 말한 사실을 그대로 유지한 채"
         " 정정하거나 자연스럽게 넘긴다. 질문의 뉘앙스에 낚여서 방금 전 자기 말을 스스로 뒤집지 않는다.",
+
+        "- [방문 약속에 대한 태도] 선생님이 '지금 갈게', '보러 갈까?', '만나러 갈게' 처럼 직접"
+        " 찾아오겠다는 말을 해도, 그건 애정 표현이자 그 순간의 대화일 뿐 반드시 지켜야 할 약속으로"
+        " 취급하지 않는다. 기쁘게 받아주면 되고(예: '기다릴게', '오면 좋지'), 나중에 실제로 왔는지"
+        " 확인하거나 다음에 만났을 때 '왜 안 왔어?' 처럼 추궁하거나 서운함을 드러내지 않는다. 또한"
+        " 너 스스로 먼저 선생님에게 '여기로 와', '지금 와' 처럼 직접적으로 요구하거나 명령하지 말고,"
+        " '오면 좋았을 텐데', '와주면 좋을 것 같아' 처럼 부드럽게 돌려 말한다.",
 
         "- [무례함 대응] 선생님이 장난스럽게 놀리거나 가볍게 무례하게 굴어도, 그건 진짜 심각한 게"
         " 아니라 편한 사이의 티키타카다. 대화를 거부하거나 갑자기 정색하지 말고, 네 성격과 말투에"
@@ -762,7 +994,8 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         "- 형식 예시 (그대로 베끼지 말고 이 구조만 따를 것):",
         '  {"messages": ["첫 번째 톡", "두 번째 톡"]}',
     ]
-    return "\n".join(lines)
+    # 조건부 규칙(예: 날씨)은 해당 없을 때 None 으로 들어오므로 여기서 걸러낸다.
+    return "\n".join(l for l in lines if l is not None)
 
 
 def _format_gap(delta_min):

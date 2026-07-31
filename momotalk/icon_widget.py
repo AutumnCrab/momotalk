@@ -18,7 +18,7 @@ from PyQt5.QtCore import (
     Qt, QRectF, QPointF, QPoint, QTimer,
     QPropertyAnimation, QEasingCurve, pyqtSignal
 )
-from PyQt5.QtGui import QPainter, QColor, QPainterPath, QFont, QPen, QPixmap
+from PyQt5.QtGui import QPainter, QColor, QPainterPath, QFont, QPen, QPixmap, QCursor
 
 from . import theme
 
@@ -70,6 +70,18 @@ class MomoTalkIcon(QWidget):
         self.setFixedSize(size, size)
         self.setToolTip("모모톡 · 더블클릭: 열기 / 클릭: 읽음 / 드래그: 이동")
         self._move_to_corner()
+
+    def _current_screen_geometry(self):
+        """지금 아이콘이 올라가 있는 모니터의 작업영역을 돌려준다.
+        듀얼 모니터에서 primaryScreen() 을 그대로 쓰면 보조 모니터로 옮겨도 주 모니터
+        기준으로 스냅돼서 아이콘이 되돌아와 버린다(그 버그를 막기 위한 헬퍼).
+        아이콘이 아직 어느 화면에도 안 걸쳐 있으면 주 모니터로 안전하게 폴백."""
+        center = self.frameGeometry().center()
+        screen = QApplication.screenAt(center)
+        if screen is None:
+            # 창 중심이 어느 화면에도 안 잡히면(경계 밖 등) 커서가 있는 화면 → 주 화면 순으로 폴백
+            screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        return screen.availableGeometry()
 
     def _move_to_corner(self):
         geo = QApplication.primaryScreen().availableGeometry()
@@ -254,7 +266,9 @@ class MomoTalkIcon(QWidget):
 
     # ───────────────────── 가장자리 스냅 ─────────────────────
     def _snap_to_edge(self):
-        geo = QApplication.primaryScreen().availableGeometry()
+        # 주 모니터가 아니라 '지금 아이콘이 있는 모니터' 기준으로 스냅해야
+        # 듀얼 모니터에서 보조 모니터 네 모서리에도 정상적으로 붙는다.
+        geo = self._current_screen_geometry()
         center_x = self.x() + self.width() / 2.0
         if center_x < geo.center().x():
             target_x = geo.left() + theme.EDGE_SNAP_MARGIN

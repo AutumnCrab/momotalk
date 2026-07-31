@@ -100,7 +100,13 @@
         "text": "새벽 라이딩. 자치구 외곽 코스(W)",
         "place": "번지 산책로",
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비가 와서 새벽 라이딩 취소. 집에서 자전거 정비",
+          "place": "집",
+          "tag": null
+        }
       },
       "10:00": {
         "text": "자전거 정비. 프레임·변속기 점검",
@@ -150,7 +156,13 @@
         "text": "장거리 라이딩(W)",
         "place": "집",
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "날씨가 나빠 장거리 라이딩 취소. 실내에서 세팅 연구",
+          "place": "집",
+          "tag": null
+        }
       },
       "12:00": {
         "text": "점심 식사",
@@ -206,7 +218,13 @@
         "text": "기상. 아침 라이딩(W)",
         "place": "집",
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비로 아침 라이딩 취소. 집에서 부품 손질",
+          "place": "집",
+          "tag": null
+        }
       },
       "08:00": {
         "text": "자전거 정비 및 부품 손질",
@@ -248,7 +266,13 @@
         "text": "아비도스 사막 부근 탐색",
         "place": "아비도스 사막",
         "with": [],
-        "tag": null
+        "tag": null,
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "궂은 날씨라 사막 탐색은 접고 집에서 조용히 정비",
+          "place": "집",
+          "tag": null
+        }
       }
     },
     "thu": {
@@ -310,10 +334,34 @@
         "text": "야간 라이딩. 아무도 없는 도로를 달림 (W)",
         "place": "시바세키 라멘집",
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비가 와서 야간 라이딩 취소. 집에서 장비 점검",
+          "place": "집",
+          "tag": null
+        }
       }
     },
     "fri": {
+      "01:00": {
+        "text": "라이딩 마치고 집으로 귀가 (W)",
+        "place": null,
+        "with": [],
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "라이딩을 못 나가, 집에서 조용히 정비하다 마무리",
+          "place": "집",
+          "tag": null
+        }
+      },
+      "03:00": {
+        "text": "집 도착 후 씻고 취침",
+        "place": "집",
+        "with": [],
+        "tag": null
+      },
       "10:00": {
         "text": "어제 야간 라이딩 여파로 늦은 기상",
         "place": "집",
@@ -374,7 +422,13 @@
         "text": "새벽 라이딩. 컨디션 점검 (W)",
         "place": "집",
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비로 새벽 라이딩 취소. 실내에서 컨디션 조절",
+          "place": "집",
+          "tag": null
+        }
       },
       "12:00": {
         "text": "점심 식사",
@@ -396,7 +450,13 @@
         "with": [
           "shiroko"
         ],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비로 로드 레이싱 연기. 자전거샵에서 작은 시로코와 장비 구경 (X)",
+          "place": "자전거샵",
+          "tag": "X"
+        }
       },
       "17:00": {
         "text": "승부 후 함께 귀갓길",
@@ -422,16 +482,40 @@
         "text": "아비도스 사막으로 자전거 타고 이동(W)",
         "place": "아비도스 사막",
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "날씨 탓에 사막행을 포기하고 집에서 쉼",
+          "place": "집",
+          "tag": null
+        }
       },
       "22:00": {
         "text": "정처없이 자전거를 끌며 아비도스 사막을 돌아다님",
         "place": "아비도스 사막",
         "with": [],
-        "tag": null
+        "tag": null,
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "집에서 지도를 보며 다음 라이딩 코스를 구상",
+          "place": "집",
+          "tag": null
+        }
       }
     },
     "sun": {
+      "01:00": {
+        "text": "정처없이 돌아다니다 집으로 귀가 (W)",
+        "place": null,
+        "with": [],
+        "tag": "W"
+      },
+      "03:00": {
+        "text": "집 도착 후 씻고 취침",
+        "place": "집",
+        "with": [],
+        "tag": null
+      },
       "10:00": {
         "text": "늦게 기상",
         "place": "집",
@@ -454,7 +538,13 @@
         "text": "자치구 산책. 조용한 골목을 돌아봄",
         "place": "번지 산책로",
         "with": [],
-        "tag": null
+        "tag": null,
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비가 와서 산책 대신 집에서 조용히 쉼",
+          "place": "집",
+          "tag": null
+        }
       },
       "19:00": {
         "text": "저녁 식사",

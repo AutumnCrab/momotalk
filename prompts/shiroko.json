@@ -296,7 +296,13 @@
         "text": "학교 청소 및 운동장 점검 (O)",
         "place": "운동장",
         "with": [],
-        "tag": "O"
+        "tag": "O",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비/눈으로 운동장 점검 보류. 실내 청소 및 비품 정리로 대체 (O)",
+          "place": "동아리실",
+          "tag": "O"
+        }
       },
       "12:00": {
         "text": "점심 식사",
@@ -406,7 +412,13 @@
         "text": "사격 훈련 및 주특기 훈련. 가장 진지하게 임함 (O)(W)",
         "place": "사격장",
         "with": [],
-        "tag": "O"
+        "tag": "O",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "악천후로 실외 사격 훈련 취소. 실내에서 기본기 훈련(사격 자세·장비 조작 숙달) (O)",
+          "place": "동아리실",
+          "tag": "O"
+        }
       },
       "16:30": {
         "text": "훈련 사후 점검(AAR) 및 장비 소탕 (O)",
@@ -430,10 +442,34 @@
         "text": "하교. 그대로 야간 장거리 라이딩 [하교 21:00](W)",
         "place": null,
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비로 야간 라이딩 취소. 하교 후 귀가해 실내에서 근력 운동",
+          "place": "집",
+          "tag": null
+        }
       }
     },
     "sat": {
+      "00:30": {
+        "text": "야간 라이딩 마치고 집으로 귀가 (W)",
+        "place": null,
+        "with": [],
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "라이딩을 못 나가서, 집에서 자전거 정비만 하다 마무리",
+          "place": "집",
+          "tag": null
+        }
+      },
+      "01:30": {
+        "text": "씻고 자전거 정비하다 취침",
+        "place": "집",
+        "with": [],
+        "tag": null
+      },
       "09:00": {
         "text": "늦잠 후 기상. 아침 식사",
         "place": "집",
@@ -466,7 +502,13 @@
         "with": [
           "kuroko"
         ],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비로 로드 레이싱 연기. 자전거샵에서 시로코*테러와 장비 구경 (X)",
+          "place": "자전거샵",
+          "tag": "X"
+        }
       },
       "17:00": {
         "text": "승부 후 함께 귀갓길",
@@ -506,7 +548,13 @@
         "text": "장거리 라이딩. 자치구 외곽 코스 (W)",
         "place": "번지 산책로",
         "with": [],
-        "tag": "W"
+        "tag": "W",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "비가 와서 장거리 라이딩 취소. 집에서 자전거 정비",
+          "place": "집",
+          "tag": null
+        }
       },
       "12:00": {
         "text": "라이딩 중 호시노 일행에게 발견되어 카페에 동행 (X)",
@@ -514,7 +562,13 @@
         "with": [
           "hoshino"
         ],
-        "tag": "X"
+        "tag": "X",
+        "weather_sensitive": true,
+        "weather_fallback": {
+          "text": "집에 있다가 호시노 일행의 연락을 받고 카페에서 합류 (X)",
+          "place": "카페",
+          "tag": "X"
+        }
       },
       "14:00": {
         "text": "다 같이 아비도스 학교 동아리실로 이동 (X)",

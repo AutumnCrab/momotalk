@@ -22,14 +22,16 @@ DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 
 def load_config():
-    """config.json 읽기. 없거나 깨지면 빈 키로 안전하게 반환."""
-    cfg = {"gemini_api_key": "", "model": DEFAULT_MODEL}
+    """config.json 읽기. 없거나 깨지면 빈 키로 안전하게 반환.
+    weather_api_key 는 선택 항목 — 없으면 날씨 기능만 조용히 꺼진다."""
+    cfg = {"gemini_api_key": "", "model": DEFAULT_MODEL, "weather_api_key": ""}
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             cfg["gemini_api_key"] = str(data.get("gemini_api_key", "")).strip()
             cfg["model"] = str(data.get("model", DEFAULT_MODEL)).strip() or DEFAULT_MODEL
+            cfg["weather_api_key"] = str(data.get("weather_api_key", "")).strip()
     except FileNotFoundError:
         print("[Gemini] config.json 이 없습니다. (루트에 만들어 키를 넣어주세요)")
     except Exception as e:

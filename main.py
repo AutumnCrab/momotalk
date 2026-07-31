@@ -28,6 +28,7 @@ from momotalk import theme
 from momotalk import persona_loader
 from momotalk import history_store
 from momotalk import anniversary_loader
+from momotalk import weather
 from momotalk.fonts import load_app_font
 from momotalk.data_loader import load_characters
 from momotalk.scheduler import Scheduler
@@ -109,7 +110,14 @@ class MomoApp:
 
         # persona(prompts/<key>.json)에 'activity' 가 있는 학생은 B안(활동 전환 시 AI 선톡)이 전담.
         # 없는 학생만 예전처럼 dialogues.json 의 고정 스케줄을 그대로 쓴다(호환 유지).
-        self.PROACTIVE_PROB = 0.50     # 활동이 바뀔 때 실제로 선톡을 보낼 확률
+        # (구) 활동이 바뀔 때마다 매번 50% 확률로 선톡 → 하루에 너무 많이 쌓이는 문제가 있었음.
+        # (신) 학생별로 하루 총 발송 개수(0~2개)를 기상 시점에 한 번만 추첨하고, 그 개수만큼만
+        # 활동 전환 시점들 중에서 나눠 보낸다. F8 디버그 트리거는 테스트 목적상 이 확률을 그대로 씀.
+        self.PROACTIVE_PROB = 0.50     # [디버그 전용] F8 강제 선톡에서만 사용
+        self.PROACTIVE_DAILY_QUOTA_WEIGHTS = {0: 0.25, 1: 0.45, 2: 0.30}  # 하루 발송 개수 확률
+        self._proactive_quota_day = {}    # key -> 마지막으로 쿼터를 뽑은 날짜(datetime.date)
+        self._proactive_quota = {}        # key -> 오늘 보낼 수 있는 총 개수(0~2)
+        self._proactive_sent_count = {}   # key -> 오늘 이미 보낸 개수
         self._activity_keys = set()
         for c in self.characters:
             p = persona_loader.load_persona(c["key"])
@@ -149,8 +157,10 @@ class MomoApp:
         QTimer.singleShot(1500, self._check_activity_transitions)  # 시작 시 기준점만 세팅(선톡 X)
 
         # 기념일(생일/세계 기념일): 매일 자정에 오늘의 대상/랜덤 발송 시각을 다시 뽑는다
+        self.EVENT_RETRY_DELAY_MIN = 30   # 발송 실패/타임아웃 시 이만큼(분) 뒤에 재시도
+        self.EVENT_MAX_RETRIES = 3        # 하루에 이 횟수만큼만 재시도(계속 실패하면 그날은 포기)
         self._event_day = None                # 마지막으로 이벤트를 계산해둔 날짜(datetime.date)
-        self._event_schedule = {}             # key -> {"kind", "extra", "at"(datetime), "sent"(bool)}
+        self._event_schedule = {}             # key -> {"kind","extra","at","sent","retry_count"}
         self._event_participants_today = set()  # 오늘 기념일 대상인 학생 key (이날은 B안을 쉼)
         self._event_cancelled = set()         # 본인 생일인데 선생님이 먼저 축하해서 예약 발송이 취소된 key
         self._event_timer = QTimer()
@@ -158,6 +168,15 @@ class MomoApp:
         self._event_timer.timeout.connect(self._check_daily_events)
         self._event_timer.start()
         QTimer.singleShot(1500, self._check_daily_events)
+
+        # 날씨: 00시 기준 3시간 블록마다 한 번 + 앱 시작 시 한 번 조회해서 캐싱.
+        # (학생 답장마다 부르는 게 아니라 캐시를 재사용 → 하루 8~10회 수준)
+        self._weather_worker = None
+        self._weather_timer = QTimer()
+        self._weather_timer.setInterval(10 * 60 * 1000)   # 10분마다 '블록 바뀌었나' 확인
+        self._weather_timer.timeout.connect(self._refresh_weather_if_needed)
+        self._weather_timer.start()
+        QTimer.singleShot(2000, self._refresh_weather_if_needed)   # 켤 때 1회
 
         # 안전망: end() 호출이 어쩌다 누락돼 학생이 영영 GENERATING 으로 굳는 사고 방지.
         # 타임아웃(25초)보다 넉넉히 오래 굳어있으면 강제로 IDLE 로 되돌린다.
@@ -255,6 +274,31 @@ class MomoApp:
         """대화/안읽음/대기메시지를 파일로 저장."""
         history_store.save(self.store, self.unread, self.pending)
 
+    # ───────────────── 날씨 캐싱 ─────────────────
+    def _refresh_weather_if_needed(self):
+        """3시간 블록이 바뀌었거나 아직 한 번도 못 받았으면 백그라운드로 날씨를 다시 가져온다.
+        키가 없으면 아무것도 하지 않는다(날씨 기능만 조용히 꺼지고 앱은 정상 동작)."""
+        api_key = self.config.get("weather_api_key", "").strip()
+        if not api_key:
+            return
+        if self._weather_worker is not None and self._weather_worker.isRunning():
+            return
+        if not weather.needs_refresh():
+            return
+        worker = weather.WeatherWorker(api_key)
+        worker.done.connect(weather.set_cache)
+        worker.finished.connect(lambda: setattr(self, "_weather_worker", None))
+        self._weather_worker = worker
+        worker.start()
+
+    def _sync_icon_badge(self):
+        """플로팅 아이콘 배지를 실제 안읽음 합계로 맞춘다.
+        대화창이 열려 있는 동안엔 배지를 올리지 않으므로, 창을 닫는 시점에
+        그동안 쌓인 안읽음을 여기서 한 번에 반영해줘야 숫자가 맞는다."""
+        self.icon.unread_count = sum(self.unread.values())
+        self.icon.update()
+        self._update_tray_tooltip()
+
 
     def on_message(self, char_key, messages, reason="unknown"):
         # 어떤 경로로든(선톡/기상답장/기념일 등이 겹치는 등) 방금 배달한 것과 완전히 같은
@@ -300,16 +344,22 @@ class MomoApp:
             ("recv", text, datetime.datetime.now().isoformat(), reason)
         )
 
+        # 지금 그 학생 대화를 직접 보고 있으면 안읽음 자체가 안 생긴다.
         viewing = (
             self.window is not None and self.window.isVisible()
             and getattr(self.window, "selected_key", None) == char_key
         )
+        # 대화창이 열려 있기만 해도(다른 학생을 보고 있어도) 플로팅 아이콘 배지는 띄우지 않는다.
+        # 채팅을 이미 보고 있는 중인데 떠다니는 아이콘에까지 빨간 숫자가 뜨는 게 부자연스럽기 때문.
+        # 대신 왼쪽 학생 목록의 그 학생 배지는 그대로 올라가서 '누가 톡을 보냈는지'는 알 수 있다.
+        window_open = self.window is not None and self.window.isVisible()
         if not viewing:
             self.unread[char_key] = self.unread.get(char_key, 0) + 1
-            self.icon.receive_message(1)
-            self._update_tray_tooltip()
-            if not self.icon.isVisible():
-                self._notify_tray_message(char_key, text)
+            if not window_open:
+                self.icon.receive_message(1)
+                self._update_tray_tooltip()
+                if not self.icon.isVisible():
+                    self._notify_tray_message(char_key, text)
 
         if self.window is not None and self.window.isVisible():
             self.window.refresh()
@@ -506,10 +556,12 @@ class MomoApp:
             self.window is not None and self.window.isVisible()
             and getattr(self.window, "selected_key", None) == char_key
         )
+        window_open = self.window is not None and self.window.isVisible()
         if not viewing:
             self.unread[char_key] = self.unread.get(char_key, 0) + 1
-            self.icon.receive_message(1)
-        if self.window is not None and self.window.isVisible():
+            if not window_open:   # 대화창이 열려 있으면 플로팅 배지는 올리지 않는다
+                self.icon.receive_message(1)
+        if window_open:
             self.window.refresh()
 
     # ───────────── 기상 감지 → 밀린 톡 학생별로 순서대로 일괄 답장 ─────────────
@@ -636,7 +688,13 @@ class MomoApp:
             return False
         return True
 
+    def _draw_daily_proactive_quota(self):
+        """오늘 하루 이 학생에게 보낼 선톡 총 개수(0~2)를 확률에 따라 뽑는다."""
+        weights = self.PROACTIVE_DAILY_QUOTA_WEIGHTS
+        return random.choices(list(weights.keys()), weights=list(weights.values()))[0]
+
     def _check_activity_transitions(self):
+        today = datetime.date.today()
         for key in self._activity_keys:
             if key in self._event_participants_today:
                 continue   # 오늘 기념일 대상이면 B안(잡담 선톡)은 쉰다
@@ -644,6 +702,16 @@ class MomoApp:
             if persona is None:
                 continue
             now = datetime.datetime.now()
+
+            # 이 학생이 '오늘' 처음으로 깨어있는 게 확인된 시점에 하루 쿼터를 한 번만 뽑는다
+            # (자는 동안엔 뽑지 않음 → 결과적으로 기상 시점에 추첨하는 것과 동일한 효과).
+            if (self._proactive_quota_day.get(key) != today
+                    and persona_loader.availability_status(persona, now) is None):
+                self._proactive_quota_day[key] = today
+                self._proactive_quota[key] = self._draw_daily_proactive_quota()
+                self._proactive_sent_count[key] = 0
+                print("[모모톡] %s 오늘의 선톡 쿼터:" % key, self._proactive_quota[key])
+
             slot = persona_loader.current_activity(persona, now)
             if slot[0] is None:
                 continue
@@ -689,8 +757,8 @@ class MomoApp:
             return   # 방금 무슨 톡이든(실시간 답장/기상 답장 등) 받은 학생은 잠깐 쉼
         if not self._proactive_window_allows(key, now):
             return
-        if random.random() > self.PROACTIVE_PROB:
-            return
+        if self._proactive_sent_count.get(key, 0) >= self._proactive_quota.get(key, 0):
+            return   # 오늘 쿼터를 이미 다 썼음
 
         self._send_proactive(key, slot[1], now)
 
@@ -763,6 +831,8 @@ class MomoApp:
             return
         self.state.end(char_key)
         self._proactive_log.append((datetime.datetime.now(), char_key))
+        if not debug:
+            self._proactive_sent_count[char_key] = self._proactive_sent_count.get(char_key, 0) + 1
         self.on_message(char_key, messages, reason="proactive_debug" if debug else "proactive")
 
     def _on_proactive_failed(self, char_key, error, worker=None):
@@ -816,11 +886,17 @@ class MomoApp:
             if kind == "own_birthday":
                 # 자기 생일은 선제적으로 선톡하지 않는다(실시간 답장에서만 다룸) —
                 # 그래도 [오늘의 특별한 날] 사실은 필요하니 스케줄엔 등록해둔다(발송 시각은 의미 없음).
-                self._event_schedule[key] = {"kind": kind, "extra": extra, "at": None, "sent": True}
+                self._event_schedule[key] = {
+                    "kind": kind, "extra": extra, "at": None, "sent": True, "retry_count": 0,
+                }
                 continue
-            at = persona_loader.pick_random_awake_datetime(persona, today)
+            # 공식/단체 일정 중이거나 취침 직전, 23:00 이후는 피해서 발송 시각을 고른다
+            # (일정에 신경 써야 할 시간엔 선생님보다 그 일정이 우선이라는 설정).
+            at = persona_loader.pick_event_send_datetime(persona, today)
             if at is not None:
-                self._event_schedule[key] = {"kind": kind, "extra": extra, "at": at, "sent": False}
+                self._event_schedule[key] = {
+                    "kind": kind, "extra": extra, "at": at, "sent": False, "retry_count": 0,
+                }
 
         if self._event_participants_today:
             print("[모모톡] 오늘의 기념일 대상:", sorted(self._event_participants_today))
@@ -883,6 +959,7 @@ class MomoApp:
             return
         print("[기념일 메시지 실패]", char_key, error)
         self.state.end(char_key)
+        self._retry_event_if_possible(char_key)
 
     def _check_event_timeout(self, worker, char_key):
         if worker not in self._workers:
@@ -891,6 +968,30 @@ class MomoApp:
         self._abandoned_workers.add(worker)
         print("[기념일 메시지 실패]", char_key, "시간 초과")
         self.state.end(char_key)
+        self._retry_event_if_possible(char_key)
+
+    def _retry_event_if_possible(self, char_key):
+        """기념일 메시지 발송 실패/타임아웃 시, 조건을 지켜서 나중에 다시 시도한다.
+        own_birthday는애초에 예약 발송 자체를 안 하므로 대상이 아니다."""
+        ev = self._event_schedule.get(char_key)
+        if ev is None or ev["kind"] == "own_birthday" or ev.get("sent") is not True:
+            return
+        ev["retry_count"] = ev.get("retry_count", 0) + 1
+        if ev["retry_count"] > self.EVENT_MAX_RETRIES:
+            print("[기념일] 재시도 한도(%d회) 초과, 오늘은 포기 →" % self.EVENT_MAX_RETRIES, char_key)
+            return
+        persona = persona_loader.load_persona(char_key)
+        if persona is None:
+            return
+        retry_after = datetime.datetime.now() + datetime.timedelta(minutes=self.EVENT_RETRY_DELAY_MIN)
+        next_at = persona_loader.next_allowed_event_datetime(persona, datetime.date.today(), retry_after)
+        if next_at is None:
+            print("[기념일] 오늘 남은 발송 허용 시간대 없음, 포기 →", char_key)
+            return
+        ev["at"] = next_at
+        ev["sent"] = False
+        print("[기념일] 재시도 예약 →", char_key, next_at.strftime("%H:%M"),
+              "(%d/%d회)" % (ev["retry_count"], self.EVENT_MAX_RETRIES))
 
     # ───────────────── 채팅창 열기 ─────────────────
     def open_chat(self, origin=None):
@@ -908,6 +1009,7 @@ class MomoApp:
             # [디버그] F8: 즉시 선톡 강제 트리거
             self.window.debug_proactive_requested.connect(self._debug_force_proactive_all)
             self.window.typing_changed.connect(self._on_typing_activity)
+            self.window.window_hidden.connect(self._sync_icon_badge)
             self._update_presence_dots()   # 창 만들자마자 상태점 첫 반영(30초 타이머 기다리지 않게)
 
         win = self.window

@@ -250,6 +250,7 @@ class ChatWindow(QWidget):
     selection_changed = pyqtSignal(str)  # 다른 학생 대화로 전환함 (char key) — 입력창 잠금 재동기화용
     debug_proactive_requested = pyqtSignal()  # [디버그] F8: 깨어있는 학생 전원 대상 즉시 선톡 트리거
     typing_changed = pyqtSignal(str)   # 입력창에 실제 텍스트 변경(타이핑)이 있음 (char key)
+    window_hidden = pyqtSignal()       # 대화창이 닫힘(숨겨짐) — 플로팅 아이콘 배지 재동기화용
 
     def __init__(self, characters, store, unread=None, birthday_keys=None):
         super().__init__()
@@ -302,6 +303,12 @@ class ChatWindow(QWidget):
 
     def resizeEvent(self, e):
         self._update_mask()
+
+    def hideEvent(self, e):
+        # 대화창이 닫히는 순간, 열려 있는 동안 안 띄웠던 안읽음 개수를
+        # 플로팅 아이콘 배지에 반영할 수 있도록 알린다.
+        super().hideEvent(e)
+        self.window_hidden.emit()
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
