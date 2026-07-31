@@ -11,6 +11,7 @@ Gemini에 보낼 [시스템 프롬프트 문자열] + [대화 히스토리]로 �
 import os
 from momotalk.paths import get_base_dir
 from momotalk import weather
+from momotalk import event_loader
 import json
 import random
 import datetime
@@ -85,6 +86,25 @@ def _entry_place(entry):
     return None
 
 
+def _activity_map(persona, date):
+    """그 '날짜'에 실제로 적용되는 activity 맵.
+    특별기간(여름휴가/제설작전) 중이면 이벤트 전용 스케줄, 아니면 평소 요일 스케줄.
+    이벤트가 없거나 그 학생이 참가자가 아니면 기존과 100% 동일하게 동작한다."""
+    ev_map = event_loader.activity_for(persona.get("key", ""), date)
+    if ev_map is not None:
+        return ev_map
+    return (persona.get("activity") or {}).get(WEEKDAY_KEYS[date.weekday()])
+
+
+def _awake_raw(persona, date):
+    """그 '날짜'에 실제로 적용되는 awake 구간 문자열 리스트.
+    특별기간이면 이벤트 awake_override, 아니면 평소 요일 awake."""
+    ev_awake = event_loader.awake_for(persona.get("key", ""), date)
+    if ev_awake is not None:
+        return ev_awake
+    return (persona.get("awake") or {}).get(WEEKDAY_KEYS[date.weekday()])
+
+
 def _sorted_entries(day_map):
     out = []
     for t, entry in (day_map or {}).items():
@@ -126,10 +146,10 @@ def current_activity_entry(persona, now=None):
     if not activity:
         return None, None
 
-    wd = now.weekday()
     cur = now.hour * 60 + now.minute
+    today = now.date()
 
-    today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
+    today_entries = _sorted_entries(_activity_map(persona, today))
     best = None
     for mins, t, entry in today_entries:
         if mins <= cur:
@@ -140,7 +160,7 @@ def current_activity_entry(persona, now=None):
         return best[0], _apply_weather_fallback(best[1])
 
     # 오늘 첫 항목보다 이른 시각(자정 근처)이면 어제의 마지막 항목이 이어지는 것으로 본다
-    yest_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd - 1) % 7]))
+    yest_entries = _sorted_entries(_activity_map(persona, today - datetime.timedelta(days=1)))
     if yest_entries:
         _, t, entry = yest_entries[-1]
         return t, _apply_weather_fallback(entry)
@@ -170,12 +190,12 @@ def recent_schedule_context(persona, now=None, hours=12):
     if not activity:
         return ""
 
-    wd = now.weekday()
+    today = now.date()
     cur_abs = now.hour * 60 + now.minute            # 오늘=day 0 기준 절대 분(0~1439)
     window_start_abs = cur_abs - hours * 60          # 음수면 어제로 걸침
 
-    today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
-    yest_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd - 1) % 7]))
+    today_entries = _sorted_entries(_activity_map(persona, today))
+    yest_entries = _sorted_entries(_activity_map(persona, today - datetime.timedelta(days=1)))
 
     # 어제 항목은 절대 분 기준으로 -1440 오프셋(어제 00:00 = -1440)
     combined = [(mins - 1440, t, entry) for mins, t, entry in yest_entries]
@@ -208,12 +228,12 @@ def upcoming_schedule_context(persona, now=None, hours=6):
     if not activity:
         return ""
 
-    wd = now.weekday()
+    today = now.date()
     cur_abs = now.hour * 60 + now.minute
     window_end_abs = cur_abs + hours * 60            # 1440 넘으면 내일로 걸침
 
-    today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
-    tomo_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[(wd + 1) % 7]))
+    today_entries = _sorted_entries(_activity_map(persona, today))
+    tomo_entries = _sorted_entries(_activity_map(persona, today + datetime.timedelta(days=1)))
 
     combined = [(mins, t, entry) for mins, t, entry in today_entries]
     combined += [(mins + 1440, t, entry) for mins, t, entry in tomo_entries]
@@ -244,9 +264,8 @@ def today_key_events_context(persona, now=None, max_items=2):
     activity = persona.get("activity")
     if not activity:
         return ""
-    wd = now.weekday()
     cur = now.hour * 60 + now.minute
-    today_entries = _sorted_entries(activity.get(WEEKDAY_KEYS[wd]))
+    today_entries = _sorted_entries(_activity_map(persona, now.date()))
     passed = [(t, entry) for mins, t, entry in today_entries if mins <= cur]
     # 마지막 항목은 '지금 진행 중인 일'이라 [지금 하는 일]과 그대로 겹친다.
     # 이걸 '이미 지나간 일정'이라며 요약에 넣으면, 지금 하고 있는 걸 과거형으로
@@ -512,13 +531,24 @@ def _event_allowed_minutes(persona, date):
     3) 각 awake 구간이 끝나기 직전 SLEEP_BUFFER_MIN 분(취침 준비 시간)은 제외.
     4) 23:00 이후는 위 조건과 무관하게 항상 제외(밤 너무 늦게 발송 금지).
     남는 시간(개인 휴식/기상 직후/등하교 이동 등)만 발송 가능 시간으로 허용된다.
+
+    단, 특별기간(여름휴가/제설작전)엔 일정이 거의 전부 (O)라서 위 규칙만 쓰면 허용 시간이
+    0분이 되어버린다. 그래서 이벤트가 정해둔 event_message_window(식사 시간 등)가 있으면
+    그 시간대를 그대로 쓴다.
     반환: 길이 1440의 bool 리스트.
     """
     SLEEP_BUFFER_MIN = 60
     HARD_CUTOFF_MIN = 23 * 60
 
-    wd = date.weekday()
-    raw = (persona.get("awake") or {}).get(WEEKDAY_KEYS[wd], [])
+    ev_windows = event_loader.message_window_for(date)
+    if ev_windows is not None:
+        allowed = [False] * 1440
+        for sm, em in ev_windows:
+            for m in range(max(sm, 0), min(em, 1440)):
+                allowed[m] = True
+        return allowed
+
+    raw = _awake_raw(persona, date) or []
     allowed = [False] * 1440
     parsed_windows = []
     for part in raw:
@@ -540,8 +570,7 @@ def _event_allowed_minutes(persona, date):
     for m in range(HARD_CUTOFF_MIN, 1440):
         allowed[m] = False
 
-    activity = (persona.get("activity") or {}).get(WEEKDAY_KEYS[wd], {})
-    entries = _sorted_entries(activity)
+    entries = _sorted_entries(_activity_map(persona, date) or {})
     for i, (mins, t, entry) in enumerate(entries):
         tag = entry.get("tag") if isinstance(entry, dict) else None
         if tag in ("O", "X"):
@@ -586,13 +615,13 @@ def next_allowed_event_datetime(persona, date, after_dt):
     return None
 
 
-def _awake_ranges(persona, weekday_idx):
-    """persona['awake'][요일] = ['HH:MM-HH:MM', ...] → [(start_분,end_분), ...]. 필드 없으면 None(=제한 없음)."""
+def _awake_ranges(persona, date):
+    """그 날짜의 awake 구간 → [(start_분,end_분), ...]. awake 필드 자체가 없으면 None(=제한 없음).
+    특별기간이면 이벤트 awake_override 를 쓴다(_awake_raw 가 처리)."""
     awake = persona.get("awake")
     if not awake:
         return None
-    wk = WEEKDAY_KEYS[weekday_idx % 7]
-    raw = awake.get(wk)
+    raw = _awake_raw(persona, date)
     if not raw:
         return []
     ranges = []
@@ -616,10 +645,10 @@ def is_awake(persona, now=None):
     if not persona.get("awake"):
         return True
 
-    wd = now.weekday()
+    today = now.date()
     cur = now.hour * 60 + now.minute
 
-    today_ranges = _awake_ranges(persona, wd)
+    today_ranges = _awake_ranges(persona, today)
     if today_ranges is None:
         return True
     for start, end in today_ranges:
@@ -631,7 +660,7 @@ def is_awake(persona, now=None):
                 return True
 
     # 어제 시작해서 오늘 새벽까지 이어지는 구간 체크
-    yest_ranges = _awake_ranges(persona, wd - 1) or []
+    yest_ranges = _awake_ranges(persona, today - datetime.timedelta(days=1)) or []
     for start, end in yest_ranges:
         if start > end and cur < end:
             return True
@@ -786,6 +815,11 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
             lines.append("[지금 있는 곳] 이동 중이라 고정된 장소는 없다")
     elif today:
         lines.append("[오늘의 상황] %s" % today)
+
+    # 특별기간(여름휴가/제설작전)이면 '지금은 평소와 다른 날'이라는 사실을 먼저 알려준다.
+    special_note = event_loader.event_note_for(persona.get("key", ""), now.date())
+    if special_note:
+        lines.append(special_note)
 
     weather_desc = weather.describe()
     if weather_desc:

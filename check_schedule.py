@@ -19,11 +19,36 @@ NAME_MAP = {
 
 
 def load_all():
+    """평소 주간 스케줄. {학생: {요일: {시각: entry}}}"""
     data = {}
     for k in KEYS:
         with open(os.path.join(BASE, "prompts", k + ".json"), encoding="utf-8") as f:
             data[k] = json.load(f)["activity"]
     return data
+
+
+def load_event_schedules():
+    """특별기간 이벤트 스케줄을 주간 스케줄과 '같은 모양'으로 바꿔서 돌려준다.
+    요일 자리에 'day1/day2/day3' 이 들어갈 뿐이라, 아래 검사 규칙 3개를 그대로 재사용할 수 있다.
+    반환: [(이벤트이름, {학생: {day1: {시각: entry}}}), ...]. events 폴더가 없으면 빈 리스트."""
+    events_dir = os.path.join(BASE, "data", "events")
+    if not os.path.isdir(events_dir):
+        return []
+    out = []
+    for fname in sorted(os.listdir(events_dir)):
+        if not fname.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(events_dir, fname), encoding="utf-8") as f:
+                ev = json.load(f)
+        except Exception as e:
+            print("[이벤트] %s 읽기 실패: %r" % (fname, e))
+            continue
+        schedules = ev.get("schedules") or {}
+        # 검사 루프가 KEYS 전부를 훑으므로, 참가 안 하는 학생은 빈 dict 로 채워둔다
+        data = {k: schedules.get(k, {}) for k in KEYS}
+        out.append((ev.get("name", ev.get("id", fname)), data))
+    return out
 
 
 def _parse_hhmm(s):
@@ -55,8 +80,10 @@ def _travel_minutes(place_a, place_b, places_registry, travel_data):
     return matrix.get(key1, matrix.get(key2, 30))  # 매트릭스에 없으면 30분(보수적 기본값)
 
 
-def check():
-    data = load_all()
+def check_schedule_set(data, label=""):
+    """주간 스케줄이든 이벤트 스케줄이든 같은 규칙 3개로 검사한다.
+    data 는 {학생: {구간키: {시각: entry}}} 형태(구간키 = 요일 또는 day1/day2/day3)."""
+    prefix = ("[%s] " % label) if label else ""
     with open(os.path.join(BASE, "data", "places.json"), encoding="utf-8") as f:
         known_places = set(json.load(f).keys())
 
@@ -79,8 +106,8 @@ def check():
                     other_place = other_entry.get("place")
                     if place != other_place:
                         warnings.append(
-                            "[이름언급 불일치] %s(%s) %s %s: place=%r / 언급된 %s(%s)의 같은 시각 place=%r"
-                            % (me, NAME_MAP[me], day, t, place, other, other_name, other_place)
+                            "%s[이름언급 불일치] %s(%s) %s %s: place=%r / 언급된 %s(%s)의 같은 시각 place=%r"
+                            % (prefix, me, NAME_MAP[me], day, t, place, other, other_name, other_place)
                         )
 
     # 규칙 2: place가 마스터 목록에 없음(오타/신규)
@@ -90,8 +117,8 @@ def check():
                 place = entry.get("place")
                 if place and place not in known_places:
                     warnings.append(
-                        "[미등록 장소] %s %s %s: place=%r 가 data/places.json에 없음"
-                        % (me, day, t, place)
+                        "%s[미등록 장소] %s %s %s: place=%r 가 data/places.json에 없음"
+                        % (prefix, me, day, t, place)
                     )
 
     # 규칙 3: 이동시간 불가능(같은 학생, 같은 요일 내 연속 슬롯 간 장소가 바뀌었는데 시간이 부족)
@@ -116,15 +143,39 @@ def check():
                 need = _travel_minutes(p1, p2, places_registry, travel_data)
                 if gap < need:
                     warnings.append(
-                        "[이동시간 부족] %s %s: %s(%s) -> %s(%s) 간격 %d분, 필요 이동시간 %d분"
-                        % (me, day, t1, p1, t2, p2, gap, need)
+                        "%s[이동시간 부족] %s %s: %s(%s) -> %s(%s) 간격 %d분, 필요 이동시간 %d분"
+                        % (prefix, me, day, t1, p1, t2, p2, gap, need)
                     )
 
     return warnings
 
 
+def check():
+    """평소 주간 스케줄 + 모든 특별기간 이벤트 스케줄을 한꺼번에 검사한다."""
+    warnings = check_schedule_set(load_all())
+    for ev_name, ev_data in load_event_schedules():
+        warnings += check_schedule_set(ev_data, label=ev_name)
+    return warnings
+
+
+def _slot_count(data):
+    return sum(len(day_map) for student in data.values() for day_map in student.values())
+
+
 if __name__ == "__main__":
+    # '무엇을 검사했는지'를 먼저 보여준다. 경고 건수만 찍으면 이벤트를 조용히 건너뛴 건지
+    # 검사했는데 문제가 없는 건지 구분이 안 돼서 헷갈린다.
+    weekly = load_all()
+    events = load_event_schedules()
+    print("[검사 대상] 주간 스케줄 %d명 / %d슬롯" % (len(weekly), _slot_count(weekly)))
+    if events:
+        for ev_name, ev_data in events:
+            print("            특별기간 '%s' / %d슬롯" % (ev_name, _slot_count(ev_data)))
+    else:
+        print("            (특별기간 이벤트 없음 - data/events/ 폴더가 비어있거나 없음)")
+
     warnings = check()
+    print()
     if not warnings:
         print("[정합성 검사] 문제 없음")
     else:

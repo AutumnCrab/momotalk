@@ -113,11 +113,20 @@ def main():
             print("\n[건너뜀] %s: prompts/%s.json 을 찾을 수 없음" % (key, key))
             continue
 
-        _, activity_desc = persona_loader.current_activity(persona, now)
+        _, entry = persona_loader.current_activity_entry(persona, now)
+        activity_desc = persona_loader._entry_text(entry) if entry is not None else None
+        activity_place = persona_loader._entry_place(entry) if entry is not None else None
+        status = persona_loader.availability_status(persona, now)
         print("\n" + "─" * 70)
         print("■ %s (%s)" % (persona.get("name", key), key))
         print("  상태: %s" % _status_label(persona, now))
         print("  지금 하는 일: %s" % (activity_desc or "(스케줄 없음)"))
+        print("  지금 있는 곳: %s" % (activity_place or "(이동 중)"))
+        if status is not None:
+            # 실제 앱은 이 상태면 답장을 안 하고 대기함에 넣는다. 여기서 답이 나오는 건
+            # '그 상황이면 어떻게 말할까'를 보려고 일부러 강제로 물어보기 때문 — 앱 버그가 아니다.
+            print("  ※ 실제 앱에서는 이 상태면 답장하지 않고 대기함에 저장한 뒤,")
+            print("     깨어난 다음 몰아서 답합니다. 아래는 강제로 물어본 참고용 응답입니다.")
         print("─" * 70)
 
         for q in QUESTIONS:

@@ -66,5 +66,17 @@
   "빈 창고": {
     "category": "학교",
     "entry_count": 2
+  },
+  "해수욕장": {
+    "category": "휴양지",
+    "entry_count": 0
+  },
+  "숙소": {
+    "category": "휴양지",
+    "entry_count": 0
+  },
+  "갯바위": {
+    "category": "휴양지",
+    "entry_count": 0
   }
 }
