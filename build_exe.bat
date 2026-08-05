@@ -12,6 +12,7 @@ if exist dist\MomoTalk\config.json copy /Y dist\MomoTalk\config.json _backup_con
 if exist dist\MomoTalk\chat_history.json copy /Y dist\MomoTalk\chat_history.json _backup_chat_history.json >nul
 if exist dist\MomoTalk\anniversaries.json copy /Y dist\MomoTalk\anniversaries.json _backup_anniversaries.json >nul
 if exist dist\MomoTalk\event_dates.json copy /Y dist\MomoTalk\event_dates.json _backup_event_dates.json >nul
+if exist dist\MomoTalk\proactive_state.json copy /Y dist\MomoTalk\proactive_state.json _backup_proactive_state.json >nul
 
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
@@ -25,6 +26,7 @@ if not exist dist\MomoTalk\MomoTalk.exe (
     if exist _backup_chat_history.json del _backup_chat_history.json
     if exist _backup_anniversaries.json del _backup_anniversaries.json
     if exist _backup_event_dates.json del _backup_event_dates.json
+    if exist _backup_proactive_state.json del _backup_proactive_state.json
     pause
     exit /b 1
 )
@@ -58,6 +60,11 @@ if exist _backup_event_dates.json (
     echo   event_dates.json restored - this year's event dates stay the same
 ) else (
     if exist event_dates.json copy /Y event_dates.json dist\MomoTalk\event_dates.json
+)
+if exist _backup_proactive_state.json (
+    move /Y _backup_proactive_state.json dist\MomoTalk\proactive_state.json >nul
+) else (
+    if exist proactive_state.json copy /Y proactive_state.json dist\MomoTalk\proactive_state.json
 )
 
 echo.

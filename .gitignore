@@ -3,6 +3,7 @@ config.json
 anniversaries.json
 chat_history.json
 event_dates.json
+proactive_state.json
 
 # ── 백업본 (build_exe.bat이 만드는 임시 백업 + 수동 백업) ──
 _backup_*.json

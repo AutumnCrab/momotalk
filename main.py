@@ -14,6 +14,7 @@
 
 import sys
 import os
+import json
 import random
 import datetime
 import time
@@ -118,6 +119,9 @@ class MomoApp:
         self._proactive_quota_day = {}    # key -> 마지막으로 쿼터를 뽑은 날짜(datetime.date)
         self._proactive_quota = {}        # key -> 오늘 보낼 수 있는 총 개수(0~2)
         self._proactive_sent_count = {}   # key -> 오늘 이미 보낸 개수
+        # 앱을 껐다 켜도 '오늘 몇 개 보냈는지'가 유지되도록 파일로 남긴다(날짜가 바뀌면 자동 폐기).
+        self.PROACTIVE_STATE_PATH = os.path.join(get_base_dir(), "proactive_state.json")
+        self._load_proactive_state()
         self._activity_keys = set()
         for c in self.characters:
             p = persona_loader.load_persona(c["key"])
@@ -145,7 +149,11 @@ class MomoApp:
         # B안: 활동 구간이 바뀌면 확률적으로 AI가 먼저 말을 건다
         self._last_activity_slot = {}   # key -> (시작시각, 설명)  직전에 기록해둔 활동 구간
         self._proactive_log = []        # [(보낸시각, 학생key), ...] 최근 1시간 내 선톡 기록(인원 제한용)
-        self.PROACTIVE_MAX_PER_HOUR = 4  # 굴러가는 1시간 동안 선톡 보낼 수 있는 서로 다른 학생 수 상한
+        # 굴러가는 1시간 동안 선톡을 보낼 수 있는 서로 다른 학생 수 상한.
+        # 예전 4명일 땐 하교(18:00)·저녁(19:00)처럼 활동 전환이 몰리는 시각에 15분 안에
+        # 4명이 우르르 톡을 보내는 일이 실제로 있었다(하루 총량은 지켰지만 체감이 몰림).
+        # 2명으로 낮춰서 시간대를 자연스럽게 흩는다.
+        self.PROACTIVE_MAX_PER_HOUR = 2
         # 활동이 바뀐 걸 감지해도 정각에 우르르 몰리지 않도록, 그 활동 구간 시작 후
         # 이 범위(초) 안에서 학생별로 랜덤한 시점에 (그때 조건을 다시 확인하고) 선톡을 시도한다.
         self.PROACTIVE_DELAY_MIN_SEC = 15 * 60
@@ -693,6 +701,43 @@ class MomoApp:
         weights = self.PROACTIVE_DAILY_QUOTA_WEIGHTS
         return random.choices(list(weights.keys()), weights=list(weights.values()))[0]
 
+    # ── 선톡 쿼터 저장/복원 ──
+    # 예전엔 쿼터가 메모리에만 있어서, 앱을 껐다 켤 때마다 '오늘 몇 개 보냈는지'가 0으로
+    # 리셋되고 쿼터도 새로 뽑혔다. 하루에 세 번 재시작하면 학생당 최대 6개까지 올 수 있어
+    # 하루 총량 제한이 사실상 무의미했다. 그래서 날짜와 함께 파일로 남긴다.
+    def _load_proactive_state(self):
+        today = datetime.date.today()
+        try:
+            with open(self.PROACTIVE_STATE_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return   # 파일이 없거나 깨졌으면 그냥 새로 시작(정상 동작)
+        if data.get("date") != today.isoformat():
+            return   # 어제 것이면 버리고 오늘 새로 뽑게 둔다
+        for key, n in (data.get("quota") or {}).items():
+            self._proactive_quota_day[key] = today
+            self._proactive_quota[key] = int(n)
+        for key, n in (data.get("sent") or {}).items():
+            self._proactive_sent_count[key] = int(n)
+        if self._proactive_quota:
+            print("[모모톡] 오늘의 선톡 쿼터를 이어받았습니다:",
+                  {k: "%d/%d" % (self._proactive_sent_count.get(k, 0), v)
+                   for k, v in sorted(self._proactive_quota.items())})
+
+    def _save_proactive_state(self):
+        today = datetime.date.today()
+        payload = {
+            "date": today.isoformat(),
+            "quota": {k: v for k, v in self._proactive_quota.items()
+                      if self._proactive_quota_day.get(k) == today},
+            "sent": dict(self._proactive_sent_count),
+        }
+        try:
+            with open(self.PROACTIVE_STATE_PATH, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print("[모모톡] 선톡 쿼터 저장 실패:", repr(e))
+
     def _check_activity_transitions(self):
         today = datetime.date.today()
         for key in self._activity_keys:
@@ -711,6 +756,7 @@ class MomoApp:
                 self._proactive_quota[key] = self._draw_daily_proactive_quota()
                 self._proactive_sent_count[key] = 0
                 print("[모모톡] %s 오늘의 선톡 쿼터:" % key, self._proactive_quota[key])
+                self._save_proactive_state()
 
             slot = persona_loader.current_activity(persona, now)
             if slot[0] is None:
@@ -833,6 +879,7 @@ class MomoApp:
         self._proactive_log.append((datetime.datetime.now(), char_key))
         if not debug:
             self._proactive_sent_count[char_key] = self._proactive_sent_count.get(char_key, 0) + 1
+            self._save_proactive_state()   # 재시작해도 오늘 보낸 개수가 유지되도록 즉시 기록
         self.on_message(char_key, messages, reason="proactive_debug" if debug else "proactive")
 
     def _on_proactive_failed(self, char_key, error, worker=None):
