@@ -4,6 +4,9 @@ anniversaries.json
 chat_history.json
 event_dates.json
 
+# ── 백업본 (build_exe.bat이 만드는 임시 백업 + 수동 백업) ──
+_backup_*.json
+
 # ── PyInstaller 빌드 산출물 (build_exe.bat으로 언제든 재생성 가능) ──
 dist/
 build/
