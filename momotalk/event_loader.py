@@ -82,6 +82,8 @@ def _pick_start_date(event, year):
     trig = event.get("trigger") or {}
     months = trig.get("months") or []
     want_wd = _WEEKDAY_NUM.get(trig.get("start_weekday"))
+    day_min = int(trig.get("day_min") or 1)
+    day_max = trig.get("day_max")
     duration = int(trig.get("duration_days") or 1)
 
     candidates = []
@@ -90,7 +92,9 @@ def _pick_start_date(event, year):
             last_day = calendar.monthrange(year, int(m))[1]
         except Exception:
             continue
-        for d in range(1, last_day + 1):
+        lo = max(1, day_min)
+        hi = min(last_day, int(day_max)) if day_max else last_day
+        for d in range(lo, hi + 1):
             day = datetime.date(year, int(m), d)
             if want_wd is not None and day.weekday() != want_wd:
                 continue

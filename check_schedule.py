@@ -11,10 +11,12 @@ import json
 import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko"]
+KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko",
+        "aru", "mutsuki", "kayoko", "haruka"]
 NAME_MAP = {
     "shiroko": "시로코", "hoshino": "호시노", "serika": "세리카",
     "ayane": "아야네", "nonomi": "노노미", "kuroko": "시로코*테러",
+    "aru": "아루", "mutsuki": "무츠키", "kayoko": "카요코", "haruka": "하루카",
 }
 
 

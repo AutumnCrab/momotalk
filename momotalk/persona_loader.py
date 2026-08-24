@@ -21,8 +21,15 @@ PROMPTS_DIR = os.path.join(BASE_DIR, "prompts")
 
 WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]  # datetime.weekday(): 월=0
 
+# main.py 의 on_message(..., reason=...) 중 캐릭터가 실제로 한 말이 아닌 UI/오류 폴백 문구.
+# build_history() 가 대화 기록에서 이 reason 이 붙은 항목은 건너뛴다(모델 자기참조 오염 방지).
+NON_DIALOGUE_REASONS = {
+    "live_error", "live_blocked", "live_failed", "live_timeout",
+    "wake_error", "wake_blocked", "wake_failed", "wake_timeout",
+}
+
 # address_terms 필드의 키(교사/학생 key)를 실제 사람 이름으로 표시하기 위한 매핑.
-# 이 6명은 고정 로스터라 하드코딩해도 무방(data_loader.py의 캐릭터 목록과 일치).
+# 이 로스터는 고정이라 하드코딩해도 무방(data_loader.py의 캐릭터 목록과 일치).
 _ADDRESS_TARGET_NAMES = {
     "teacher": "선생님",
     "shiroko": "시로코",
@@ -31,6 +38,10 @@ _ADDRESS_TARGET_NAMES = {
     "ayane": "아야네",
     "nonomi": "노노미",
     "kuroko": "시로코*테러",
+    "aru": "아루",
+    "mutsuki": "무츠키",
+    "kayoko": "카요코",
+    "haruka": "하루카",
 }
 
 
@@ -49,7 +60,9 @@ def build_address_terms_line(persona):
     return (
         "[호칭] 다른 사람을 지칭·호명할 때는 이렇게 부른다: " + ", ".join(parts)
         + ". 대화 중 이 사람들 얘기가 나오면 항상 이 호칭을 쓴다"
-          "(존댓말/반말 선택과는 별개로, 이 명칭 자체는 지킬 것)."
+          "(존댓말/반말 선택과는 별개로, 이 명칭 자체는 지킬 것). [매우 중요] 이 호칭은 그 사람의"
+          " 실제 이름과 절대 같이 붙여 쓰지 않는다 — 예를 들어 '사장'이 정해진 호칭이면 '아루 사장'이"
+          " 아니라 그냥 '사장'이라고만 부른다."
     )
 
 
@@ -304,7 +317,20 @@ def today_key_events_context(persona, now=None, max_items=2):
 # 완전한 장소 필드가 없으니 문자열 겹침으로 "같이 있을 가능성"만 느슨하게 추정한다.
 _PLACE_KEYWORDS = ["시바세키", "동아리실", "학교", "아비도스", "마트", "라멘집", "라멘", "창고", "카페", "식당"]
 
-_STUDENT_KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko"]
+# 그룹별로 나눠 둔다 — 아비도스 6명과 흥신소 68 4명은 co-presence를 서로 절대
+# 엮지 않기로 했다(설계 제약). 하나의 평평한 리스트로 합치면 "시바세키 라멘집"처럼
+# 두 그룹이 우연히 같은 장소 문자열을 쓰는 경우 place 일치만으로 서로 잘못 엮인다.
+_ABYDOS_KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko"]
+_HUNGSINSO68_KEYS = ["aru", "mutsuki", "kayoko", "haruka"]
+_STUDENT_GROUPS = [_ABYDOS_KEYS, _HUNGSINSO68_KEYS]
+
+
+def _group_peers(char_key):
+    """char_key와 같은 그룹(같은 학원) 소속 다른 학생 key만 돌려준다."""
+    for group in _STUDENT_GROUPS:
+        if char_key in group:
+            return [k for k in group if k != char_key]
+    return []
 
 
 def _activity_markers(desc):
@@ -321,9 +347,7 @@ def _co_present_legacy_estimate(char_key, me, my_desc, now):
     my_markers = _activity_markers(my_desc)
 
     found, apart = [], []
-    for other_key in _STUDENT_KEYS:
-        if other_key == char_key:
-            continue
+    for other_key in _group_peers(char_key):
         other = load_persona(other_key)
         if other is None:
             continue
@@ -376,9 +400,7 @@ def build_co_present_note(char_key, now=None):
         # 신규 구조화 경로: place 정확 일치로 확정 판정(추정 아님). 단, '집'은 예외(아래 참고).
         my_name = _ADDRESS_TARGET_NAMES.get(char_key, char_key)
         found, apart = [], []
-        for other_key in _STUDENT_KEYS:
-            if other_key == char_key:
-                continue
+        for other_key in _group_peers(char_key):
             other = load_persona(other_key)
             if other is None:
                 continue
@@ -468,6 +490,13 @@ def build_proactive_note(activity_desc, schedule_context=""):
         " 네가 하고 있는 일이나 하고 싶은 말로 이어가라. 1~2개의 짧은 말풍선으로, 편하게"
         " 톡을 보내는 느낌이면 된다. 너무 격식 차리지 말 것."
     )
+    lines.append(
+        "[중요] '혹시 시간 괜찮아?', '물어볼 거 있어', '부탁이 있는데' 처럼 뒤에 구체적인 용건이"
+        " 더 있다는 걸 암시하는 표현은 쓰지 않는다. 너한테 지금 실제로 있는 건 위에 적힌 활동·스케줄"
+        " 사실뿐이고 그 이상의 숨겨진 용건은 없기 때문에, 그런 식으로 운을 띄우면 선생님이 '무슨"
+        " 일이야?'라고 물었을 때 대답할 거리가 없어 앞뒤가 안 맞게 된다. 그냥 지금 하는 일이나 근황을"
+        " 담백하게 공유하는 걸로 끝내라 — 그게 이 톡의 용건이다."
+    )
     return "\n".join(lines)
 
 
@@ -481,10 +510,14 @@ def is_persona_birthday(persona, now=None):
     return now.strftime("%m-%d") == bday
 
 
-def build_event_note(kind, extra=None, persona=None):
+def build_event_note(kind, extra=None, persona=None, already_sent=False):
     """기념일 종류별 시스템 프롬프트 지시문. AI가 알아서 자연스럽게 표현하도록만 지시하고,
     구체적 대사는 하나도 미리 정해두지 않는다 — 단, persona에 birthday_few_shot이 있고
-    kind가 own_birthday/teacher_birthday면 그 캐릭터 목소리의 예시 대사를 참고용으로 덧붙인다."""
+    kind가 own_birthday/teacher_birthday면 그 캐릭터 목소리의 예시 대사를 참고용으로 덧붙인다.
+
+    already_sent: teacher_birthday 한정. '오늘 축하 인사를 이미 보냈는지'를 대화 기록에서
+    모델이 스스로 추론하게 하면 반복적으로 틀렸다(이미 축하해놓고 안 한 척하는 등) — 그래서
+    호출부(main.py)가 실제 상태(ev["sent"])를 사실로 그대로 알려준다."""
     note = ""
     if kind == "own_birthday":
         note = (
@@ -498,11 +531,33 @@ def build_event_note(kind, extra=None, persona=None):
             " '내 생일이야'라고 말하지는 않는다."
         )
     elif kind == "teacher_birthday":
-        note = (
-            "[오늘의 특별한 날]\n"
-            "오늘은 선생님의 생일이다. 진심을 담아 축하 인사를 건네라. 너의 성격과 말투에 맞는 방식으로"
-            " 축하하면 된다."
-        )
+        if already_sent:
+            note = (
+                "[오늘의 특별한 날 - 사실 확인]\n"
+                "오늘은 선생님의 생일이고, [사실] 너는 이미 오늘 선생님에게 축하 인사를 건넸다"
+                "(대화 기록 위쪽에 그 인사가 남아있다 — 이건 네가 스스로 판단할 문제가 아니라"
+                " 확정된 사실이다). 그러므로:\n"
+                "- 절대로 '나는 아직 축하 안 했는데?', '어? 무슨 소리야?', '내 생일 아닌데?' 처럼"
+                " 방금 축하한 적 없다는 듯이 굴거나 되묻지 않는다. 방금 네가 한 축하를 스스로 잊은"
+                " 것처럼 굴면 명백한 오류다.\n"
+                "- 선생님이 '고마워', '축하해줘서 고마워' 같은 말로 답례하면, 그건 선생님이 네 축하를"
+                " 받고 고마워하는 것뿐이다. 선생님이 무슨 날인지 착각했다거나 헷갈렸다는 식으로"
+                " 놀리거나 되묻지 않는다 — 오늘이 선생님 생일인 건 진짜 사실이고 착각이 아니다.\n"
+                "- 매 답장마다 생일 얘기를 다시 억지로 꺼내지 않는다. 선생님이 무슨 말을 하든 그 말"
+                " 내용 자체에만 자연스럽게 반응하고, 선생님이 스스로 생일 얘기를 다시 꺼낼 때만"
+                " 그에 맞춰 반응한다."
+            )
+        else:
+            note = (
+                "[오늘의 특별한 날 - 사실 확인]\n"
+                "오늘은 선생님의 생일이고, [사실] 너는 아직 오늘 선생님에게 축하 인사를 건네지"
+                " 않았다(이건 확정된 사실이다). 진심을 담아 축하 인사를 건네라. 너의 성격과 말투에"
+                " 맞는 방식으로 축하하면 된다. [매우 중요] 지금 먼저 말을 거는 이유 자체가 생일을"
+                " 축하하기 위해서다 — 축하 인사에 지금 하는 일·있는 곳 같은 근황을 섞어 붙이지 않는다"
+                "(예: 순찰 중이라거나 뭘 하고 있다는 얘기는 꺼내지 않는다). 축하하는 마음만 담백하게"
+                " 전한다. [중요] 말풍선 2개로 짧게 끝내지 말고, 꼭 3개로 나눠 보낸다(예: 첫 축하 인사 →"
+                " 축하하는 마음을 더 담은 말 한마디 → 너다운 짧은 마무리 멘트)."
+            )
     elif kind == "world_holiday":
         name = extra or "특별한 날"
         note = (
@@ -838,7 +893,10 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
     # (오늘이 진짜 생일이면 event_note 가 따로 붙으므로 여기선 넣지 않는다.)
     own_bday = persona.get("birthday")
     not_my_birthday = bool(own_bday) and not is_persona_birthday(persona, now)
-    if not_my_birthday:
+    if not_my_birthday and not event_note:
+        # event_note 가 있는 날(예: 선생님 생일)엔 이 사실 문구를 안 넣는다 — 있으면 모델이 이 문구를
+        # 근거 삼아 "내 생일 아니야, 이미 지났어/몇 달 남았어" 식으로 스스로 정정하려 들어서
+        # [오늘의 특별한 날] 지시(이미 축하했다는 사실 등)와 계속 충돌했다.
         try:
             bm, bd = own_bday.split("-")
             lines.append("[네 생일] %d월 %d일 — 오늘은 네 생일이 아니다." % (int(bm), int(bd)))
@@ -926,7 +984,7 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
          " 같은 말을 해도 맞장구치며 자기 생일인 척하지 않는다('기억해줬구나', '어떻게 알았어?' 등은"
          " 명백한 사실 오류다). 대신 '내 생일 아직 멀었는데?', '그건 몇 달 뒤야' 처럼 네 성격에 맞게"
          " 사실대로 정정한다. 선생님이 자기 생일이라고 말하는 경우는 별개이니 평범하게 축하해주면"
-         " 된다.") if not_my_birthday else None,
+         " 된다.") if (not_my_birthday and not event_note) else None,
 
         "- [축하·감사 상황에서도 어체와 호칭 유지 - 매우 중요] 선생님의 생일을 축하하거나, 선생님이"
         " 고맙다고 하거나 칭찬했을 때 갑자기 격식을 차리지 않는다. 이런 상황에서 존댓말로 바뀌거나"
@@ -947,10 +1005,30 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
         " 말고 짧게 되묻거나 인사로만 반응한다(매번 같은 문구 대신 그때그때 다르게). 먼저 꺼낼 용건이"
         " 있더라도 선생님이 묻지 않았다면 매번 들이밀지 말고 자연스러운 흐름에서만 꺼낸다.",
 
-        "- [반복 절대 금지] 이번에 보내는 messages 배열 안에서 같은 말을 두 번 넣지 않는다. 이건"
-        " 말풍선 여러 개 사이의 반복만이 아니라, **말풍선 하나 안에서도** 같은 뜻을 표현만 살짝"
-        " 바꿔서 두 번 말하는 것(예: '나중에 보자, 나중에 봐!'처럼 같은 인사를 이어붙이는 것)을"
-        " 포함한다. 하고 싶은 말은 한 번만, 가장 자연스러운 한 마디로 끝낸다. 그리고"
+        "- [안 물어본 근황 스스로 꺼내지 않기 - 매우 중요] 선생님 말에 오직 그 말에만 대답한다."
+        " '언제나 고마워!'처럼 지금 뭐 하는지·어디 있는지를 묻지 않은 말에는, [지금 하는 일]/[지금"
+        " 있는 곳] 정보를 스스로 꺼내 붙이지 않는다(예: 그냥 '고마워'라고 했을 뿐인데 '누구랑 저녁"
+        " 먹으면서 무슨 계획 세우는 중이었어' 처럼 안 물어본 근황을 얹으면, 맥락 없이 갑자기 화제가"
+        " 튀어나온 것처럼 보여 부자연스럽다). [지금 하는 일]은 선생님이 그걸 직접 묻거나(예: '뭐해?',"
+        " '어디야?') 대화 흐름상 자연스럽게 이어질 때만 쓴다.",
+
+        "- [내가 먼저 말 건 경우 이어가기 - 매우 중요] 바로 직전에 네가 먼저 말을 걸었고(선톡), 지금"
+        " 선생님이 그 말에 답한 상황이라면(예: 대화 기록에서 네 말풍선 다음에 선생님 말풍선이 곧바로"
+        " 이어지는 경우) 절대 새로 대화가 시작된 것처럼 굴지 않는다. 방금 네가 한 말을 다시 그대로"
+        " 반복하지 말고(예: 이미 '씻고 운동 중이야'라고 해놓고 또 '씻고 운동 중이었어'라고 답하는 것),"
+        " 선생님이 '무슨 일이야?', '왜 불렀어?' 처럼 되물으면 방금 네 말풍선에 뭔가를 암시했다면(예:"
+        " '시간 괜찮아?') 그 이어질 내용을 실제로 이야기한다. 특히 먼저 연락한 건 너 자신이므로,"
+        " '선생님은 왜 연락했어?' 처럼 마치 선생님이 먼저 말을 건 것처럼 되묻지 않는다 — 그건 명백한"
+        " 사실 오류다.",
+
+        "- [반복 절대 금지 - 매우 중요] 이번에 보내는 messages 배열 안에서 같은 말을 두 번 넣지 않는다."
+        " 토씨까지 완전히 같은 문장만 반복이 아니다 — **표현만 바꿔서 같은 감정·의도를 두 번 이상"
+        " 말하는 것도 반복**이다. 예를 들어 '기대해도 좋아~' 다음에 '실망시키지 않을게!'라고"
+        " 말풍선을 하나 더 만드는 것은, 단어는 다르지만 둘 다 '믿고 기다려도 된다'는 같은 안심시키는"
+        " 말을 두 번 하는 것이라 반복이다. '나중에 보자' 다음에 '나중에 봐!'처럼 같은 인사를"
+        " 이어붙이는 것도 마찬가지다. 말풍선을 다 쓴 뒤에는, 각 말풍선이 서로 다른 새 내용(정보·감정"
+        "·화제)을 담고 있는지 스스로 점검한다 — 앞 말풍선과 같은 감정을 표현만 바꿔 강조하고 있다면"
+        " 그 말풍선은 지운다. 하고 싶은 말은 한 번만, 가장 자연스러운 한 마디로 끝낸다. 그리고"
         " 대화 기록에서 네가 '직전에 이미 보낸 말풍선'을 토씨까지 똑같이 다시 보내지 않는다. 설령"
         " 대화 기록에 네가 같은 말을 반복한 흔적이 보이더라도, 그건 실수였을 뿐 네 말버릇이 아니다."
         " 절대 그 반복을 흉내 내거나 이어가지 말고, 지금은 한 번만, 새로운 말로 답한다.",
@@ -1068,6 +1146,9 @@ def build_history(store_list, limit=20, gap_threshold_min=60):
     → Gemini contents 형식 [{"role": "user"/"model", "parts": [{"text": ...}]}, ...]
     선생님 = user, 학생(나 자신) = model.
     'absent' 는 실제 대화가 아닌 UI 전용 시스템 문구라 히스토리에서 제외한다.
+    "지금은 답장하기 어려워요" 같은 API 실패/타임아웃 폴백 문구(NON_DIALOGUE_REASONS)도
+    마찬가지로 제외한다 — 캐릭터가 실제로 한 말이 아닌데 그대로 넣으면, 다음 호출 때 모델이
+    자기가 방금 "답장 못 하겠다"고 말한 것처럼 그 문맥을 이어받아 대화가 이상해진다.
 
     [반복 방지] 과거에 어떤 이유로든 모델(학생)의 완전히 같은 말이 연달아 저장돼 있으면,
     그걸 그대로 프롬프트에 넣으면 모델이 '이 캐릭터는 원래 같은 말을 반복한다'고 오학습해서
@@ -1080,6 +1161,13 @@ def build_history(store_list, limit=20, gap_threshold_min=60):
     처럼 보임). 이제 저장된 타임스탬프(3번째 필드, 있을 때만)를 이용해 직전 메시지와의 간격이
     gap_threshold_min(기본 60분) 이상이면 그 메시지 앞에 '[N시간 경과]' 같은 안내를 붙인다.
     타임스탬프가 없는 옛 데이터(2-tuple)는 간격 계산을 그냥 건너뛴다(안전하게 무시).
+
+    [연속 전송 병합] 선생님이 학생 답장 없이 톡을 연달아 여러 개 보내면(예: "힘들지 않아?" 다음에
+    바로 "밥은 먹었어?"), 그 사이에 model 턴이 하나도 안 끼어 있는 한 별도 user 턴을 새로 만들지
+    않고 직전 user 턴에 줄바꿈으로 이어붙인다. 분리된 턴으로 넣으면 모델이 이걸 '질문 여러 개'로
+    보고 한 줄씩 기계적으로 따로 답하는 문제가 실제로 있었다(라이브에서 확인됨) — 애초에 한 턴으로
+    합쳐서 넣으면 모델이 분리해서 볼 방법 자체가 없어진다. [규칙]의 "여러 메시지에 한 번에 답하기"
+    지시와 함께 작동한다.
     """
     contents = []
     prev_model_text = None
@@ -1087,7 +1175,8 @@ def build_history(store_list, limit=20, gap_threshold_min=60):
     for entry in store_list[-limit:]:
         sender, text = entry[0], entry[1]   # 3번째(타임스탬프)가 있어도/없어도 안전
         ts = entry[2] if len(entry) > 2 else None
-        if sender == "absent":
+        reason = entry[3] if len(entry) > 3 else None
+        if sender == "absent" or reason in NON_DIALOGUE_REASONS:
             continue
         role = "model" if sender == "recv" else "user"
         if role == "model":
@@ -1110,7 +1199,11 @@ def build_history(store_list, limit=20, gap_threshold_min=60):
         if ts:
             prev_ts = ts
 
-        contents.append({"role": role, "parts": [{"text": gap_prefix + text}]})
+        if role == "user" and contents and contents[-1]["role"] == "user":
+            # 학생 답장 없이 선생님이 연달아 보낸 톡 → 새 턴을 만들지 않고 직전 user 턴에 합친다.
+            contents[-1]["parts"][0]["text"] += "\n" + gap_prefix + text
+        else:
+            contents.append({"role": role, "parts": [{"text": gap_prefix + text}]})
     return contents
 
 

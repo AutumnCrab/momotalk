@@ -18,6 +18,9 @@ import json
 import random
 import datetime
 import time
+import subprocess
+import ctypes
+from ctypes import wintypes
 
 from PyQt5.QtCore import (
     Qt, QRect, QTimer, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
@@ -36,13 +39,40 @@ from momotalk.scheduler import Scheduler
 from momotalk.icon_widget import MomoTalkIcon
 from momotalk.chat_window import ChatWindow
 from momotalk.gemini_client import GeminiWorker, load_config
+from momotalk.openai_client import OpenAIWorker
 from momotalk.student_state import StudentStateMachine
+from momotalk import autostart
+from momotalk.toast import ToastManager
+from momotalk import voice
+from momotalk import sfx
+
+
+def _taskbar_center():
+    """실제 Windows 작업표시줄(Shell_TrayWnd) 화면 좌표의 중앙점을 돌려준다.
+    최소화 애니메이션이 크롬처럼 진짜 작업표시줄 쪽으로 모이게 하려는 용도.
+    ponytail: 앱 자신의 taskbar 버튼 정확한 좌표는 Windows 11에서 셸 내부(UI Automation)
+    없인 못 구함(버전마다 구조 다르고 불안정) — 작업표시줄 전체의 중앙으로 근사."""
+    try:
+        hwnd = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
+        if not hwnd:
+            return None
+        rect = wintypes.RECT()
+        if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        return ((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
+    except Exception:
+        return None
 
 
 class MomoApp:
     def __init__(self):
+        self.config = load_config()
+        self._first_run_gate()
+
         self.characters = load_characters()
         print("[모모톡] 캐릭터 로드:", [c["name"] for c in self.characters])
+        sfx.preload()
+        voice.preload([c["key"] for c in self.characters])
         # 캐릭터별 대화 저장소: key -> [(sender, text), ...]
         self.store = {c["key"]: [] for c in self.characters}
         # 학생별 안 읽은 메시지 수 (목록 배지용)
@@ -75,15 +105,20 @@ class MomoApp:
         self.icon = MomoTalkIcon()
         self.icon.open_requested.connect(self.open_chat)
         self.icon.hide_requested.connect(self.hide_icon)
+        self.icon.reload_requested.connect(self._reload_data)
+        self.icon.settings_requested.connect(self.open_settings)
 
         self.window = None
         self._open_anim = None
+        self._close_anim = None
+        self._minimize_target = None   # 최소화 시 줄어든 좌표(복원 애니메이션 시작점)
+        self._pre_minimize_geo = None  # 최소화 전 원래 좌표(복원 애니메이션 도착점)
         self._tray = None
 
         self._setup_tray()
+        self._toast = ToastManager()
 
         # Gemini 답장 관련
-        self.config = load_config()
         self._workers = []          # QThread 참조 보관(GC 방지)
         self.GEMINI_TIMEOUT_MS = 25 * 1000   # 이 시간 안에 응답이 없으면 클라이언트 쪽에서 포기 처리
         self._abandoned_workers = set()      # 타임아웃으로 포기한 워커(뒤늦게 응답 와도 무시하기 위함)
@@ -112,13 +147,19 @@ class MomoApp:
         # persona(prompts/<key>.json)에 'activity' 가 있는 학생은 B안(활동 전환 시 AI 선톡)이 전담.
         # 없는 학생만 예전처럼 dialogues.json 의 고정 스케줄을 그대로 쓴다(호환 유지).
         # (구) 활동이 바뀔 때마다 매번 50% 확률로 선톡 → 하루에 너무 많이 쌓이는 문제가 있었음.
-        # (신) 학생별로 하루 총 발송 개수(0~2개)를 기상 시점에 한 번만 추첨하고, 그 개수만큼만
+        # (신) 학생별로 하루 총 발송 개수(0~1개)를 기상 시점에 한 번만 추첨하고, 그 개수만큼만
         # 활동 전환 시점들 중에서 나눠 보낸다. F8 디버그 트리거는 테스트 목적상 이 확률을 그대로 씀.
         self.PROACTIVE_PROB = 0.50     # [디버그 전용] F8 강제 선톡에서만 사용
-        self.PROACTIVE_DAILY_QUOTA_WEIGHTS = {0: 0.25, 1: 0.45, 2: 0.30}  # 하루 발송 개수 확률
+        self.PROACTIVE_DAILY_QUOTA_WEIGHTS = {0: 0.35, 1: 0.65}  # 하루 발송 개수 확률(최대 1개)
         self._proactive_quota_day = {}    # key -> 마지막으로 쿼터를 뽑은 날짜(datetime.date)
-        self._proactive_quota = {}        # key -> 오늘 보낼 수 있는 총 개수(0~2)
+        self._proactive_quota = {}        # key -> 오늘 보낼 수 있는 총 개수(0~1)
         self._proactive_sent_count = {}   # key -> 오늘 이미 보낸 개수
+        # 학생이 10명으로 늘면서 전원이 매일 각자 선톡을 굴리면 하루 총량이 너무 커진다.
+        # 그래서 그날 선톡 '자격' 자체를 하루 4~5명으로 먼저 추려두고, 그 안에 든 학생만
+        # 위 쿼터(0~1개) 추첨 대상이 된다 — 나머지는 그날 아예 선톡을 안 함.
+        self.PROACTIVE_DAILY_ELIGIBLE_SIZES = (4, 5)
+        self._proactive_eligible_day = None       # 마지막으로 명단을 뽑은 날짜
+        self._proactive_eligible_today = set()    # 오늘 선톡 자격이 있는 학생 key 집합
         # 앱을 껐다 켜도 '오늘 몇 개 보냈는지'가 유지되도록 파일로 남긴다(날짜가 바뀌면 자동 폐기).
         self.PROACTIVE_STATE_PATH = os.path.join(get_base_dir(), "proactive_state.json")
         self._load_proactive_state()
@@ -169,7 +210,7 @@ class MomoApp:
         self.EVENT_MAX_RETRIES = 3        # 하루에 이 횟수만큼만 재시도(계속 실패하면 그날은 포기)
         self._event_day = None                # 마지막으로 이벤트를 계산해둔 날짜(datetime.date)
         self._event_schedule = {}             # key -> {"kind","extra","at","sent","retry_count"}
-        self._event_participants_today = set()  # 오늘 기념일 대상인 학생 key (이날은 B안을 쉼)
+        self._event_participants_today = set()  # 오늘 기념일 대상인 학생 key
         self._event_cancelled = set()         # 본인 생일인데 선생님이 먼저 축하해서 예약 발송이 취소된 key
         self._event_timer = QTimer()
         self._event_timer.setInterval(60 * 1000)   # 1분마다 '오늘의 기념일 발송 시각' 체크
@@ -200,9 +241,13 @@ class MomoApp:
         self._presence_timer.timeout.connect(self._update_presence_dots)
         self._presence_timer.start()
 
-        self.icon.show()
-        self.icon.raise_()
-        self.icon.activateWindow()
+        self.UI_STATE_PATH = os.path.join(get_base_dir(), "ui_state.json")
+        if not self._load_icon_hidden_state():
+            self.icon.show()
+            self.icon.raise_()
+            self.icon.activateWindow()
+            self.icon.animate_pop_in()
+            sfx.play("on")
 
         geo = QApplication.primaryScreen().availableGeometry()
         print("[모모톡] 화면 영역  : x=%d y=%d w=%d h=%d"
@@ -211,6 +256,23 @@ class MomoApp:
               % (self.icon.x(), self.icon.y(), self.icon.width(), self.icon.height()))
         print("[모모톡] 준비 완료! 화면 '우측 하단'을 확인하세요.")
         print("[모모톡] (종료: 아이콘 우클릭 → 종료  /  또는 이 터미널에서 Ctrl+C)")
+
+        # 새로고침(재시작) 직후라면: 알림을 남기고, 대화창이 열려 있었다면 같은 학생 대화로 다시 연다.
+        if os.environ.pop("MOMOTALK_RELOADED", None):
+            reopen_key = os.environ.pop("MOMOTALK_REOPEN_KEY", "")
+            QTimer.singleShot(400, lambda: self._notify_near_icon("새로고침 완료"))
+            if reopen_key:
+                QTimer.singleShot(400, lambda: self._reopen_after_reload(reopen_key))
+
+    def _notify_near_icon(self, text):
+        """Windows 시스템 토스트 대신 아이콘 옆에 뜨는 가벼운 말풍선 툴팁."""
+        from PyQt5.QtWidgets import QToolTip
+        QToolTip.showText(self.icon.mapToGlobal(self.icon.rect().topLeft()), text, self.icon)
+
+    def _reopen_after_reload(self, char_key):
+        self.open_chat(None)
+        if self.window is not None and any(c["key"] == char_key for c in self.characters):
+            self.window._select(char_key)
 
     # ─────────────── 시스템 트레이 (상시 상주) ───────────────
     def _setup_tray(self):
@@ -229,38 +291,153 @@ class MomoApp:
         self._tray.setToolTip("모모톡")
 
         menu = QMenu()
-        menu.addAction("아이콘 보이기", self.show_icon)
+        self._show_icon_action = menu.addAction("아이콘 보이기", self.show_icon)
         menu.addAction("채팅창 열기", lambda: self.open_chat(None))
         menu.addSeparator()
-        menu.addAction("종료", QApplication.quit)
-        self._tray.setContextMenu(menu)
+        menu.addAction("새로고침", self._reload_data)
+        self._autostart_action = menu.addAction("", self._toggle_autostart)
+        menu.aboutToShow.connect(self._refresh_autostart_label)
+        menu.aboutToShow.connect(self._refresh_show_icon_action)
+        self._refresh_autostart_label()
+        menu.addSeparator()
+        menu.addAction("종료", self._confirm_quit)
+        # setContextMenu()로 붙여두면 Windows가(특히 '숨겨진 아이콘' 팝업에서) 더블클릭
+        # 도중에도 메뉴를 자동으로 띄워버려서, 두 번째 클릭이 메뉴 항목(심하면 '종료')을
+        # 잘못 찍는 사고가 났다. 자동 연결을 빼고, 우클릭(Context)일 때만 직접 팝업시킨다.
+        self._tray_menu = menu
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
 
+    def _confirm_quit(self):
+        """트레이 메뉴 맨 아래 '종료' — 실수로 눌러도(특히 Windows 숨겨진 아이콘 팝업에서
+        더블클릭 중 잘못 찍히는 경우) 바로 꺼지지 않게 한 번 확인한다."""
+        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtGui import QCursor
+        box = QMessageBox(QMessageBox.Question, "모모톡 종료",
+                           "정말 모모톡을 종료할까요?",
+                           QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        # 항상 위 아이콘/트레이보다 뒤에 그려지던 문제 — 이 창도 최상단 고정.
+        box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
+        pos = QCursor.pos()
+        size = box.sizeHint()
+        screen = QApplication.screenAt(pos) or QApplication.primaryScreen()
+        avail = screen.availableGeometry()
+        x = min(pos.x() - size.width() - 12, avail.right() - size.width())
+        y = min(pos.y() - size.height(), avail.bottom() - size.height())
+        box.move(max(x, avail.left()), max(y, avail.top()))
+        box.show()
+        box.raise_()
+        box.activateWindow()
+        if box.exec_() == QMessageBox.Yes:
+            QApplication.quit()
+
+    def _refresh_show_icon_action(self):
+        """아이콘이 이미 화면에 보이는 중이면 '아이콘 보이기' 항목을 눌러도 의미가 없으니 비활성화."""
+        self._show_icon_action.setEnabled(not self.icon.isVisible())
+
+    def _refresh_autostart_label(self):
+        """라벨은 지금 상태가 아니라 '눌렀을 때 뭐가 되는지'를 보여준다.
+        켜져 있으면 (off)(누르면 꺼짐), 꺼져 있으면 (on)(누르면 켜짐)."""
+        state = "(off)" if autostart.is_enabled() else "(on)"
+        self._autostart_action.setText("시작 시 자동 실행 %s" % state)
+
+    def _toggle_autostart(self):
+        if autostart.is_enabled():
+            autostart.disable()
+            msg = "자동 시작을 껐어요."
+        else:
+            autostart.enable()
+            msg = "컴퓨터를 켜면 모모톡이 자동으로 시작돼요."
+        self._refresh_autostart_label()
+        self._toast.show_status_toast(msg)
+
+    def _first_run_gate(self):
+        """API 키가 하나도 없으면(=첫 실행) 위젯을 띄우기 전에 초기 설정창부터 강제로 띄운다.
+        여기서 저장 안 하고 닫으면(취소/X) 아무것도 못 할 게 뻔하므로 앱을 바로 종료한다."""
+        if self.config.get("gemini_api_key") or self.config.get("openai_api_key"):
+            return
+        from PyQt5.QtWidgets import QDialog
+        from momotalk.settings_dialog import SettingsDialog
+        anniv = anniversary_loader.load()
+        dlg = SettingsDialog(self.config, anniv.get("user_birthday", ""), is_first_run=True)
+        if dlg.exec_() != QDialog.Accepted:
+            print("[모모톡] 초기 설정을 완료하지 않아 종료합니다.")
+            sys.exit(0)
+
+    def open_settings(self):
+        """우클릭 메뉴 '초기 설정' — 생일 + API 키 2개 입력/수정 화면.
+        저장되면 self.config 를 그 자리에서 갱신하므로 재시작 없이 다음 Gemini/날씨
+        호출부터 바로 새 키가 쓰인다."""
+        from momotalk.settings_dialog import SettingsDialog
+        anniv = anniversary_loader.load()
+        dlg = SettingsDialog(self.config, anniv.get("user_birthday", ""))
+        dlg.exec_()
+
+    def _reload_data(self):
+        """디버깅용: 수정한 .py 코드까지 반영하려면 파이썬 특성상 프로세스를 통째로
+        다시 시작하는 것 말고는 방법이 없다(모듈 부분 재로드는 실행 중인 QThread/타이머와
+        얽혀 훨씬 더 잘 깨진다). 재시작 자체는 안 보이게 할 수 없지만, 대화 기록을 먼저
+        저장해두고 재시작 직후 채팅창을 자동으로 다시 열어 체감 단절을 최소화한다."""
+        print("[모모톡] 새로고침: 재시작합니다.")
+        self._save_history()
+
+        os.environ["MOMOTALK_RELOADED"] = "1"
+        if self.window is not None and self.window.isVisible():
+            os.environ["MOMOTALK_REOPEN_KEY"] = self.window.selected_key or ""
+
+        python = sys.executable
+        if getattr(sys, "frozen", False):
+            args = [python] + sys.argv[1:]
+        else:
+            args = [python, os.path.abspath(__file__)] + sys.argv[1:]
+        # os.execv는 윈도우에서 경로에 공백(예: "바탕 화면")이 있으면 인자 quoting이 깨져
+        # 새 프로세스가 스크립트 경로를 못 찾고 죽는다. subprocess.Popen은 인자 리스트를
+        # 안전하게 quoting해서 넘기므로 이 문제가 없다.
+        subprocess.Popen(args, cwd=get_base_dir())
+        QApplication.quit()
+
     def _on_tray_activated(self, reason):
         from PyQt5.QtWidgets import QSystemTrayIcon
+        from PyQt5.QtGui import QCursor
         # 트레이 더블클릭 → 떠다니는 아이콘 다시 표시 (A안 1번)
         if reason == QSystemTrayIcon.DoubleClick:
             self.show_icon()
+        elif reason == QSystemTrayIcon.Context:
+            # 우클릭일 때만 여기서 직접 메뉴를 띄운다(setContextMenu 자동 연결 안 씀).
+            self._tray_menu.popup(QCursor.pos())
 
     def hide_icon(self):
-        """바탕화면의 떠다니는 아이콘만 숨김. 앱·트레이는 계속 살아있음."""
-        from PyQt5.QtWidgets import QSystemTrayIcon
-        self.icon.hide()
-        if self._tray is not None:
-            self._tray.showMessage(
-                "모모톡",
-                "아이콘을 숨겼어요. 트레이 아이콘을 더블클릭하면 다시 나타나요.",
-                QSystemTrayIcon.Information,
-                3000,
-            )
+        """바탕화면의 떠다니는 아이콘만 숨김(줄어드는 애니메이션 후). 앱·트레이는 계속 살아있음."""
+        sfx.play("off")
+        self.icon.animate_pop_out()
+        self._save_icon_hidden_state(True)
+        self._toast.show_status_toast("아이콘을 숨겼어요. 트레이 아이콘을 더블클릭하면 다시 나타나요.")
 
     def show_icon(self):
         """숨긴 떠다니는 아이콘을 다시 표시."""
         self.icon.show()
         self.icon.raise_()
         self.icon.activateWindow()
+        self.icon.animate_pop_in()
+        sfx.play("on")
+        self._save_icon_hidden_state(False)
         self._update_tray_tooltip()
+
+    def _load_icon_hidden_state(self):
+        """지난번에 아이콘을 숨긴 채로 껐으면 True(=이번에도 숨김 유지)."""
+        try:
+            with open(self.UI_STATE_PATH, encoding="utf-8") as f:
+                return bool(json.load(f).get("icon_hidden", False))
+        except Exception:
+            return False
+
+    def _save_icon_hidden_state(self, hidden):
+        try:
+            with open(self.UI_STATE_PATH, "w", encoding="utf-8") as f:
+                json.dump({"icon_hidden": hidden}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print("[모모톡] 아이콘 숨김 상태 저장 실패:", repr(e))
 
     def _update_tray_tooltip(self):
         """트레이 아이콘에 마우스를 올렸을 때 안 읽은 메시지 수가 보이게 툴팁을 갱신."""
@@ -269,14 +446,30 @@ class MomoApp:
         total = sum(self.unread.values())
         self._tray.setToolTip("모모톡 (안 읽은 메시지 %d)" % total if total > 0 else "모모톡")
 
-    def _notify_tray_message(self, char_key, text):
-        """플로팅 아이콘이 숨겨져 있을 때도 놓치지 않도록, 새 메시지를 윈도우 알림으로 띄운다."""
-        if self._tray is None:
+    def _notify_tray_message(self, char_key, text, is_first):
+        """플로팅 아이콘이 숨겨져 있을 때도 놓치지 않도록, 새 메시지를 커스텀 알림 팝업으로 띄운다."""
+        char = next((c for c in self.characters if c["key"] == char_key), None)
+        if char is None:
             return
-        from PyQt5.QtWidgets import QSystemTrayIcon
-        name = next((c["name"] for c in self.characters if c["key"] == char_key), char_key)
-        preview = text if len(text) <= 60 else text[:57] + "..."
-        self._tray.showMessage(name, preview, QSystemTrayIcon.Information, 4000)
+
+        def _play_sounds():
+            # 알림음/보이스는 큐에 넣는 지금이 아니라, 실제로 토스트가 화면에 뜨는 순간(스택
+            # 밀림/STAGGER_MS 대기 이후일 수 있음)에 맞춰 재생해야 싱크가 맞는다.
+            sfx.play("on")
+            if is_first:
+                voice.play_sensei_voice(char_key)
+
+        self._toast.show_chat_toast(
+            char_key, char["name"], char.get("profile_img", ""), text,
+            on_click=lambda: self.open_chat(char_key=char_key),
+            on_shown=_play_sounds,
+        )
+
+    def _window_active(self):
+        """대화창이 화면에 떠 있고 '최소화되지 않은' 상태인가(=유저가 지금 실제로 보고 있을 수 있는가).
+        최소화된 창도 isVisible()은 True를 반환하므로, 안읽음 배지 판정엔 이 함수를 써야 한다."""
+        return (self.window is not None and self.window.isVisible()
+                and not self.window.isMinimized())
 
     def _save_history(self):
         """대화/안읽음/대기메시지를 파일로 저장."""
@@ -334,8 +527,7 @@ class MomoApp:
         self._delivering = True
         char_key = self._msg_queue[0][0]
         # 지금 그 학생 대화를 보고 있을 때만 '입력 중...' 점이 화면에 보임
-        if (self.window is not None and self.window.isVisible()
-                and getattr(self.window, "selected_key", None) == char_key):
+        if self._window_active() and getattr(self.window, "selected_key", None) == char_key:
             self.window.set_typing(char_key)
         QTimer.singleShot(self.TYPING_MS, self._deliver_after_typing)
 
@@ -353,21 +545,23 @@ class MomoApp:
         )
 
         # 지금 그 학생 대화를 직접 보고 있으면 안읽음 자체가 안 생긴다.
-        viewing = (
-            self.window is not None and self.window.isVisible()
-            and getattr(self.window, "selected_key", None) == char_key
-        )
+        # (창이 최소화돼 있으면 '보고 있는' 게 아니므로 window_open=False 취급 → 배지 올라감)
+        viewing = self._window_active() and getattr(self.window, "selected_key", None) == char_key
         # 대화창이 열려 있기만 해도(다른 학생을 보고 있어도) 플로팅 아이콘 배지는 띄우지 않는다.
         # 채팅을 이미 보고 있는 중인데 떠다니는 아이콘에까지 빨간 숫자가 뜨는 게 부자연스럽기 때문.
         # 대신 왼쪽 학생 목록의 그 학생 배지는 그대로 올라가서 '누가 톡을 보냈는지'는 알 수 있다.
-        window_open = self.window is not None and self.window.isVisible()
+        window_open = self._window_active()
+        window_minimized = self.window is not None and self.window.isMinimized()
         if not viewing:
             self.unread[char_key] = self.unread.get(char_key, 0) + 1
             if not window_open:
                 self.icon.receive_message(1)
                 self._update_tray_tooltip()
-                if not self.icon.isVisible():
-                    self._notify_tray_message(char_key, text)
+                # 창이 최소화된 것뿐이면 굳이 토스트까진 안 띄운다(작업표시줄에 이미 떠 있어서 배지로 충분).
+                # 창이 아예 닫혀있으면 플로팅 아이콘이 보이든 숨겨져 있든 토스트로 알려준다
+                # (배지는 계속 남는 카운트, 토스트는 방금 온 내용 미리보기라 역할이 다르다).
+                if not window_minimized and reason not in persona_loader.NON_DIALOGUE_REASONS:
+                    self._notify_tray_message(char_key, text, is_first=(self.unread[char_key] == 1))
 
         if self.window is not None and self.window.isVisible():
             self.window.refresh()
@@ -426,7 +620,7 @@ class MomoApp:
             self._queue_pending(char_key, now, reason=status)   # 취침/부재중: 호출 안 하고 대기함에 저장
             return
 
-        api_key = self.config.get("gemini_api_key", "").strip()
+        WorkerCls, api_key, model = self._provider_worker_args()
         if not api_key:
             self.on_message(char_key, ["(config.json 에 API 키를 넣어주세요.)"], reason="live_error")
             return
@@ -435,7 +629,9 @@ class MomoApp:
         event_note = ""
         ev = self._event_schedule.get(char_key)
         if ev is not None:
-            event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
+            event_note = persona_loader.build_event_note(
+                ev["kind"], ev.get("extra"), persona=persona, already_sent=ev.get("sent", False)
+            )
 
         system_prompt, contents = persona_loader.assemble(
             char_key, self.store.get(char_key, []), now=now, event_note=event_note
@@ -447,11 +643,11 @@ class MomoApp:
         self.state.begin(char_key, "live")
         self._sync_input_lock()                    # 보고 있는 학생이면 입력창 잠금
         if self.window is not None:
-            if self.window.isVisible() and self.window.selected_key == char_key:
+            if self._window_active() and self.window.selected_key == char_key:
                 self.window.set_typing(char_key)   # 응답 기다리는 동안 입력중 점
 
-        worker = GeminiWorker(
-            char_key, api_key, self.config.get("model", ""), system_prompt, contents
+        worker = WorkerCls(
+            char_key, api_key, model, system_prompt, contents
         )
         worker.done.connect(lambda k, m, w=worker: self._on_reply(k, m, w))
         worker.failed.connect(lambda k, e, w=worker: self._on_reply_failed(k, e, w))
@@ -560,16 +756,13 @@ class MomoApp:
             ("absent", label, datetime.datetime.now().isoformat(), reason)
         )
 
-        viewing = (
-            self.window is not None and self.window.isVisible()
-            and getattr(self.window, "selected_key", None) == char_key
-        )
-        window_open = self.window is not None and self.window.isVisible()
+        viewing = self._window_active() and getattr(self.window, "selected_key", None) == char_key
+        window_open = self._window_active()
         if not viewing:
             self.unread[char_key] = self.unread.get(char_key, 0) + 1
             if not window_open:   # 대화창이 열려 있으면 플로팅 배지는 올리지 않는다
                 self.icon.receive_message(1)
-        if window_open:
+        if self.window is not None and self.window.isVisible():
             self.window.refresh()
 
     # ───────────── 기상 감지 → 밀린 톡 학생별로 순서대로 일괄 답장 ─────────────
@@ -612,7 +805,7 @@ class MomoApp:
         self.pending[char_key] = []
         self._save_history()
 
-        api_key = self.config.get("gemini_api_key", "").strip()
+        WorkerCls, api_key, model = self._provider_worker_args()
         if not api_key:
             self.on_message(char_key, ["(어, 미안. 이제 봤어. 근데 config.json에 키가 없어서 답장을 못 만들겠어.)"], reason="wake_error")
             QTimer.singleShot(1200, self._process_next_wake)
@@ -625,7 +818,9 @@ class MomoApp:
         ev = self._event_schedule.get(char_key)
         if ev is not None:
             persona = persona_loader.load_persona(char_key)
-            event_note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
+            event_note = persona_loader.build_event_note(
+                ev["kind"], ev.get("extra"), persona=persona, already_sent=ev.get("sent", False)
+            )
 
         system_prompt, contents = persona_loader.assemble(
             char_key, self.store.get(char_key, []), wake_note=wake_note, event_note=event_note
@@ -634,8 +829,8 @@ class MomoApp:
             self._process_next_wake()
             return
 
-        worker = GeminiWorker(
-            char_key, api_key, self.config.get("model", ""), system_prompt, contents
+        worker = WorkerCls(
+            char_key, api_key, model, system_prompt, contents
         )
         worker.done.connect(lambda k, m, w=worker: self._on_wake_reply(k, m, w))
         worker.failed.connect(lambda k, e, w=worker: self._on_wake_reply_failed(k, e, w))
@@ -697,9 +892,19 @@ class MomoApp:
         return True
 
     def _draw_daily_proactive_quota(self):
-        """오늘 하루 이 학생에게 보낼 선톡 총 개수(0~2)를 확률에 따라 뽑는다."""
+        """오늘 하루 이 학생에게 보낼 선톡 총 개수(0~1)를 확률에 따라 뽑는다."""
         weights = self.PROACTIVE_DAILY_QUOTA_WEIGHTS
         return random.choices(list(weights.keys()), weights=list(weights.values()))[0]
+
+    def _ensure_daily_eligible_pool(self):
+        """오늘 선톡 자격이 있는 학생 4~5명을 하루에 한 번만 뽑아둔다(날짜 바뀌면 다시 뽑음)."""
+        today = datetime.date.today()
+        if self._proactive_eligible_day == today:
+            return
+        self._proactive_eligible_day = today
+        size = min(random.choice(self.PROACTIVE_DAILY_ELIGIBLE_SIZES), len(self._activity_keys))
+        self._proactive_eligible_today = set(random.sample(sorted(self._activity_keys), size))
+        print("[모모톡] 오늘의 선톡 자격 학생(%d명):" % size, sorted(self._proactive_eligible_today))
 
     # ── 선톡 쿼터 저장/복원 ──
     # 예전엔 쿼터가 메모리에만 있어서, 앱을 껐다 켤 때마다 '오늘 몇 개 보냈는지'가 0으로
@@ -740,9 +945,10 @@ class MomoApp:
 
     def _check_activity_transitions(self):
         today = datetime.date.today()
+        self._ensure_daily_eligible_pool()
         for key in self._activity_keys:
-            if key in self._event_participants_today:
-                continue   # 오늘 기념일 대상이면 B안(잡담 선톡)은 쉰다
+            # 기념일 대상이어도 평소 잡담 선톡(B안)을 그대로 돌린다 — 기념일 톡은 그 위에
+            # '한 번 더' 얹히는 보너스 발화 기회다(원래 쿼터가 0이면 오늘은 1, 1이면 2).
             persona = persona_loader.load_persona(key)
             if persona is None:
                 continue
@@ -753,7 +959,10 @@ class MomoApp:
             if (self._proactive_quota_day.get(key) != today
                     and persona_loader.availability_status(persona, now) is None):
                 self._proactive_quota_day[key] = today
-                self._proactive_quota[key] = self._draw_daily_proactive_quota()
+                if key in self._proactive_eligible_today:
+                    self._proactive_quota[key] = self._draw_daily_proactive_quota()
+                else:
+                    self._proactive_quota[key] = 0   # 오늘 선톡 자격 명단에 없음
                 self._proactive_sent_count[key] = 0
                 print("[모모톡] %s 오늘의 선톡 쿼터:" % key, self._proactive_quota[key])
                 self._save_proactive_state()
@@ -779,8 +988,6 @@ class MomoApp:
     def _attempt_delayed_proactive(self, key, slot):
         """_check_activity_transitions 에서 예약해둔 지연 선톡 시도.
         15~45분이나 지난 뒤라 상황이 달라졌을 수 있으니, 보내도 되는지 조건을 전부 다시 확인한다."""
-        if key in self._event_participants_today:
-            return
         persona = persona_loader.load_persona(key)
         if persona is None:
             return
@@ -808,38 +1015,8 @@ class MomoApp:
 
         self._send_proactive(key, slot[1], now)
 
-    def _debug_force_proactive_all(self):
-        """[디버그 전용] F8 단축키로 호출됨.
-        실제 활동 전환(slot 변경)이나 5분 쿨다운, 시간당 인원 상한을 전부 건너뛰고,
-        '지금' 깨어있는 학생 전원을 대상으로 각자 현재 activity 기준 50% 확률로 즉시 선톡을 발동시킨다.
-        원래 버그(여러 학생이 겹쳐서 중복 응답)를 실제 대기 없이 즉시 재현해보기 위한 도구.
-        상태머신(state.begin)은 그대로 통하므로, 이미 다른 요청이 진행 중인 학생은 여전히 조용히 건너뛴다.
-        """
-        now = datetime.datetime.now()
-        print("[디버그] F8 강제 선톡 트리거 실행 —", now.strftime("%H:%M:%S"))
-        picked = []
-        for key in self._activity_keys:
-            if key in self._event_participants_today:
-                continue   # 기념일 대상은 디버그에서도 제외(실제 흐름과 충돌 방지)
-            persona = persona_loader.load_persona(key)
-            if persona is None:
-                continue
-            if persona_loader.availability_status(persona, now) is not None:
-                continue   # 취침/부재중(W) 학생은 디버그에서도 대상 아님(실제 동작과 일관성 유지)
-            slot = persona_loader.current_activity(persona, now)
-            if slot[0] is None:
-                continue
-            if random.random() > self.PROACTIVE_PROB:
-                continue   # 여기서도 50% 확률 굴림(실제와 동일한 조건 재현)
-            picked.append((key, slot[1]))
-            self._send_proactive(key, slot[1], now, debug=True)
-        if picked:
-            print("[디버그] 이번에 선톡 시도한 학생:", [k for k, _ in picked])
-        else:
-            print("[디버그] 이번엔 확률/조건에 걸려 아무도 선택 안 됨(다시 눌러보세요)")
-
     def _send_proactive(self, char_key, activity_desc, now, debug=False):
-        api_key = self.config.get("gemini_api_key", "").strip()
+        WorkerCls, api_key, model = self._provider_worker_args()
         if not api_key:
             return   # 선톡은 조용히 스킵(키 없다고 안내문까지 띄울 필요는 없음)
 
@@ -859,8 +1036,8 @@ class MomoApp:
 
         if not self.state.begin(char_key, "proactive"):
             return   # 그새 다른 요청이 시작됐으면 이번 선톡은 포기(중복 방지)
-        worker = GeminiWorker(
-            char_key, api_key, self.config.get("model", ""), system_prompt, contents
+        worker = WorkerCls(
+            char_key, api_key, model, system_prompt, contents
         )
         worker.done.connect(lambda k, m, w=worker: self._on_proactive_reply(k, m, w, debug=debug))
         worker.failed.connect(lambda k, e, w=worker: self._on_proactive_failed(k, e, w))
@@ -964,13 +1141,15 @@ class MomoApp:
             self._send_event_message(key, ev)
 
     def _send_event_message(self, char_key, ev):
-        api_key = self.config.get("gemini_api_key", "").strip()
+        WorkerCls, api_key, model = self._provider_worker_args()
         if not api_key:
             ev["sent"] = True
             return
 
         persona = persona_loader.load_persona(char_key)
-        note = persona_loader.build_event_note(ev["kind"], ev.get("extra"), persona=persona)
+        note = persona_loader.build_event_note(
+            ev["kind"], ev.get("extra"), persona=persona, already_sent=ev.get("sent", False)
+        )
         system_prompt, contents = persona_loader.assemble(
             char_key, self.store.get(char_key, []), now=datetime.datetime.now(), event_note=note
         )
@@ -981,8 +1160,8 @@ class MomoApp:
         if not self.state.begin(char_key, "event"):
             return   # 그새 다른 요청이 시작됐으면 sent 표시하지 말고 다음 체크 때 다시 시도
         ev["sent"] = True   # begin 성공 후에만 표시(재시도로 인한 중복 발송 방지)
-        worker = GeminiWorker(
-            char_key, api_key, self.config.get("model", ""), system_prompt, contents
+        worker = WorkerCls(
+            char_key, api_key, model, system_prompt, contents
         )
         worker.done.connect(lambda k, m, w=worker: self._on_event_reply(k, m, w))
         worker.failed.connect(lambda k, e, w=worker: self._on_event_failed(k, e, w))
@@ -1040,8 +1219,15 @@ class MomoApp:
         print("[기념일] 재시도 예약 →", char_key, next_at.strftime("%H:%M"),
               "(%d/%d회)" % (ev["retry_count"], self.EVENT_MAX_RETRIES))
 
+    def _provider_worker_args(self):
+        """config.json의 "provider"(gemini/openai)에 맞는 (워커 클래스, api_key, model)을 돌려준다.
+        OpenAIWorker는 GeminiWorker와 신호(done/failed)가 동일해서 호출부는 이 셋만 바꿔 쓰면 됨."""
+        if self.config.get("provider") == "openai":
+            return OpenAIWorker, self.config.get("openai_api_key", "").strip(), self.config.get("openai_model", "")
+        return GeminiWorker, self.config.get("gemini_api_key", "").strip(), self.config.get("model", "")
+
     # ───────────────── 채팅창 열기 ─────────────────
-    def open_chat(self, origin=None):
+    def open_chat(self, origin=None, char_key=None):
         self.icon.mark_as_read()
 
         if self.window is None:
@@ -1053,23 +1239,35 @@ class MomoApp:
             self.window.message_sent.connect(self.on_user_message)
             # 학생 전환 시 입력창 잠금을 새 학생 상태에 맞춰 갱신
             self.window.selection_changed.connect(lambda k: self._sync_input_lock())
-            # [디버그] F8: 즉시 선톡 강제 트리거
-            self.window.debug_proactive_requested.connect(self._debug_force_proactive_all)
             self.window.typing_changed.connect(self._on_typing_activity)
             self.window.window_hidden.connect(self._sync_icon_badge)
+            self.window.minimize_requested.connect(self._animate_minimize)
+            self.window.close_requested.connect(self._animate_close)
+            # 작업표시줄 아이콘을 눌러 복원했을 때도(플로팅 아이콘 복원과 동일하게)
+            # 축소됐던 자리에서 자라나는 트랜지션이 붙도록.
+            self.window.restore_requested.connect(self._animate_restore)
             self._update_presence_dots()   # 창 만들자마자 상태점 첫 반영(30초 타이머 기다리지 않게)
 
         win = self.window
+        if char_key is not None:
+            win._select(char_key)
         if win.selected_key is not None:
             self.unread[win.selected_key] = 0    # 보고 있는 학생은 읽음
         win.refresh()
         self._sync_input_lock()                  # 열 때 현재 학생 상태에 맞춰 입력창 잠금 동기화
         self._update_tray_tooltip()
         if win.isVisible():
-            win.raise_()
-            win.activateWindow()
+            if win.isMinimized():
+                # showNormal() 이 상태전환을 일으키면 win 의 changeEvent 가
+                # restore_requested 를 쏴서 _animate_restore 가 실행됨(작업표시줄
+                # 아이콘 클릭으로 복원할 때와 같은 경로).
+                win.showNormal()
+            else:
+                win.raise_()
+                win.activateWindow()
             return
 
+        sfx.play("momotalk")
         screen = QApplication.primaryScreen().availableGeometry()
         w = min(theme.CHAT_W, screen.width() - 40)
         h = min(theme.CHAT_H, screen.height() - 40)
@@ -1098,6 +1296,7 @@ class MomoApp:
         self._animate_open(win, start, final)
 
     def _animate_open(self, win, start, final):
+        win.suspend_mask()   # 애니메이션 중 매 프레임 마스크 재계산 끔(잔상 방지)
         geo = QPropertyAnimation(win, b"geometry")
         geo.setDuration(300)
         geo.setStartValue(start)
@@ -1115,11 +1314,149 @@ class MomoApp:
         group = QParallelAnimationGroup()
         group.addAnimation(geo)
         group.addAnimation(fade)
+        group.finished.connect(win.resume_mask)
         group.start()
         self._open_anim = group
 
+    def _animate_minimize(self):
+        """'−' 클릭: 화면 하단(작업표시줄 방향)으로 줄어들며 사라진 뒤 진짜 OS 최소화.
+        showMinimized() 를 써서 작업표시줄에 아이콘으로 남는다(hide() 아님).
+        복원(플로팅 아이콘 더블클릭 / 작업표시줄 아이콘 클릭 둘 다)은 _animate_restore 가
+        여기서 기억해 둔 target/원래 좌표를 그대로 역재생한다.
+        목표 좌표는 _taskbar_center() (실제 작업표시줄 중앙, ctypes) — 못 구하면 화면 우하단 근사."""
+        win = self.window
+        if win is None or not win.isVisible():
+            return
+        start = win.geometry()
+        screen = QApplication.primaryScreen().availableGeometry()
+        sw, sh = int(start.width() * 0.1), int(start.height() * 0.1)
+        center = _taskbar_center() or (screen.right() - 40, screen.bottom())
+        target = QRect(center[0] - sw // 2, center[1] - sh // 2, sw, sh)
+        self._pre_minimize_geo = start
+        self._minimize_target = target
+
+        def finish():
+            win.showMinimized()
+
+        self._run_collapse_anim(win, target, finish)
+
+    def _animate_close(self):
+        """'✕' 클릭: 열릴 때(_animate_open)의 역재생 — 창 자기 중심으로 모이며 꺼짐."""
+        win = self.window
+        if win is None or not win.isVisible():
+            return
+        sfx.play("off")
+        current = win.geometry()
+        cx, cy = current.center().x(), current.center().y()
+        sw, sh = int(current.width() * 0.62), int(current.height() * 0.62)
+        target = QRect(cx - sw // 2, cy - sh // 2, sw, sh)
+
+        def finish():
+            win.hide()
+            win.setWindowOpacity(1.0)   # 다음에 다시 보일 때 투명하지 않게 복구
+            win.resume_mask()
+
+        self._run_collapse_anim(win, target, finish)
+
+    def _animate_restore(self):
+        """최소화 해제(플로팅 아이콘 더블클릭이든 작업표시줄 아이콘 클릭이든)를
+        _animate_minimize 가 줄여놨던 자리에서 원래 자리로 자라나는 트랜지션으로 보여준다.
+        win.showNormal() 이 이미 실행돼 창이 막 보이려는 시점에 changeEvent 가 이걸 부르므로,
+        아직 화면에 실제로 그려지기 전에 작은 크기/투명으로 스냅해서 그 상태부터 키운다."""
+        win = self.window
+        if win is None or self._minimize_target is None:
+            return
+        start = self._minimize_target
+        final = self._pre_minimize_geo
+        self._minimize_target = None
+        self._pre_minimize_geo = None
+
+        win.suspend_mask()
+        win.setGeometry(start)
+        win.setWindowOpacity(0.0)
+
+        geo = QPropertyAnimation(win, b"geometry")
+        geo.setDuration(300)
+        geo.setStartValue(start)
+        geo.setEndValue(final)
+        curve = QEasingCurve(QEasingCurve.OutBack)
+        curve.setOvershoot(1.4)
+        geo.setEasingCurve(curve)
+
+        fade = QPropertyAnimation(win, b"windowOpacity")
+        fade.setDuration(160)
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        fade.setEasingCurve(QEasingCurve.OutCubic)
+
+        def finish():
+            win.resume_mask()
+            win.raise_()
+            win.activateWindow()
+
+        group = QParallelAnimationGroup()
+        group.addAnimation(geo)
+        group.addAnimation(fade)
+        group.finished.connect(finish)
+        group.start()
+        self._open_anim = group
+
+    def _run_collapse_anim(self, win, target, on_finished):
+        win.suspend_mask()   # 애니메이션 중 매 프레임 마스크 재계산 끔(잔상 방지)
+        geo = QPropertyAnimation(win, b"geometry")
+        geo.setDuration(220)
+        geo.setStartValue(win.geometry())
+        geo.setEndValue(target)
+        geo.setEasingCurve(QEasingCurve.InCubic)
+
+        fade = QPropertyAnimation(win, b"windowOpacity")
+        fade.setDuration(220)
+        fade.setStartValue(win.windowOpacity())
+        fade.setEndValue(0.0)
+        fade.setEasingCurve(QEasingCurve.InCubic)
+
+        group = QParallelAnimationGroup()
+        group.addAnimation(geo)
+        group.addAnimation(fade)
+        group.finished.connect(on_finished)
+        group.start()
+        self._close_anim = group
+
+
+def _setup_logging():
+    """pythonw로 실행되면(예: '새로고침' 재시작) 콘솔이 아예 없어서 print 가 어디에도
+    안 남는다 — 그래서 표준출력/에러를 파일로 돌려 항상 momotalk.log 에서 확인 가능하게 한다.
+    실행할 때마다 새로 덮어써서 항상 '가장 최근 실행' 로그만 남는다."""
+    log_path = os.path.join(get_base_dir(), "momotalk.log")
+    try:
+        log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+        sys.stdout = log_file
+        sys.stderr = log_file
+    except Exception:
+        pass   # 로그 파일을 못 열어도 앱 자체는 계속 동작해야 함
+
+
+def _install_crash_logger():
+    """PyQt5는 슬롯(메뉴 클릭 등) 안에서 터진 예외를 sys.excepthook 으로 넘긴 뒤 앱을 그대로
+    죽여버린다 — 이때 로그 파일이 line-buffered라도 그 즉시 flush 안 하면 죽는 속도가 더 빨라서
+    트레이스백이 파일에 안 남고 사라지는 경우가 있었다(원인 불명 침묵 종료). 여기서 확실히
+    flush까지 해서 다음에 또 이런 일이 생기면 momotalk.log 에 무조건 남게 한다."""
+    import traceback
+
+    def _hook(exc_type, exc_value, exc_tb):
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+    sys.excepthook = _hook
+
 
 def main():
+    _setup_logging()
+    _install_crash_logger()
     import platform
     from PyQt5.QtCore import QT_VERSION_STR
 

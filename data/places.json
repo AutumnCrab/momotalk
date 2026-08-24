@@ -1,4 +1,8 @@
 {
+  "흥신소 사무실": {
+    "category": "집",
+    "entry_count": 179
+  },
   "집": {
     "category": "집",
     "entry_count": 105
@@ -17,7 +21,31 @@
   },
   "시바세키 라멘집": {
     "category": "식당",
-    "entry_count": 24
+    "entry_count": 28
+  },
+  "게헨나 공원": {
+    "category": "야외",
+    "entry_count": 12
+  },
+  "게헨나 상점가": {
+    "category": "상점",
+    "entry_count": 10
+  },
+  "아비도스 인근": {
+    "category": "야외",
+    "entry_count": 8
+  },
+  "폐공장 부지": {
+    "category": "야외",
+    "entry_count": 4
+  },
+  "지하도": {
+    "category": "야외",
+    "entry_count": 2
+  },
+  "뒷골목 창고": {
+    "category": "야외",
+    "entry_count": 1
   },
   "사격장": {
     "category": "학교",
@@ -77,6 +105,14 @@
   },
   "갯바위": {
     "category": "휴양지",
+    "entry_count": 0
+  },
+  "임무 현장": {
+    "category": "휴양지",
+    "entry_count": 0
+  },
+  "신사": {
+    "category": "야외",
     "entry_count": 0
   }
 }

@@ -1,0 +1,627 @@
+{
+  "id": "infiltration_mission",
+  "name": "잠입 임무",
+  "_설명": "9~10월 중 랜덤 1박2일. 정장/드레스로 위장하고 고위 인사들 파티에 잠입해 타겟 확보·정보 입수하는 스파이 임무.",
+  "trigger": {
+    "months": [
+      9,
+      10
+    ],
+    "start_weekday": null,
+    "duration_days": 2
+  },
+  "participants": [
+    "aru",
+    "mutsuki",
+    "kayoko",
+    "haruka"
+  ],
+  "_awake_설명": "1일차는 임무 때문에 자정 넘어서까지 깨어있음.",
+  "awake_override": {
+    "aru": {
+      "day1": [
+        "08:00-00:30"
+      ],
+      "day2": [
+        "08:00-23:30"
+      ]
+    },
+    "mutsuki": {
+      "day1": [
+        "08:00-00:30"
+      ],
+      "day2": [
+        "08:00-23:30"
+      ]
+    },
+    "kayoko": {
+      "day1": [
+        "08:00-00:30"
+      ],
+      "day2": [
+        "08:00-23:30"
+      ]
+    },
+    "haruka": {
+      "day1": [
+        "08:00-00:30"
+      ],
+      "day2": [
+        "08:00-23:30"
+      ]
+    }
+  },
+  "_message_window_설명": "임무 중이라 톡 볼 짬이 거의 없음. 출발 전 아침과 철수 직전 잠깐뿐.",
+  "event_message_window": [
+    [
+      "08:00",
+      "09:00"
+    ],
+    [
+      "22:30",
+      "23:00"
+    ]
+  ],
+  "schedules": {
+    "aru": {
+      "day1": {
+        "08:00": {
+          "text": "기상. 오늘 밤 임무용 드레스 마지막 손질, 사장답게 태연한 척",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "09:30": {
+          "text": "사무실 집합, 오늘 잠입 임무 최종 브리핑 (O). 사장답게 지휘",
+          "place": "흥신소 사무실",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "임무 현장으로 이동",
+          "place": null,
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "14:00": {
+          "text": "임무 현장 도착, 현장 답사 및 최종 동선 점검 (O)",
+          "place": "임무 현장",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "17:00": {
+          "text": "위장 준비 마무리, 다들 옷매무새 점검 (O)",
+          "place": "임무 현장",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "19:00": {
+          "text": "파티장 잠입 시작 (O)(W). 사장답게 여유로운 척 인사 돌림",
+          "place": "임무 현장",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "W"
+        },
+        "22:00": {
+          "text": "타겟 확보, 임무 수행 (O)(W). 마지막까지 흔들림 없이 지휘",
+          "place": "임무 현장",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "W"
+        },
+        "23:30": {
+          "text": "임무 무사히 종료, 철수. 다들 고생했다며 다독임 (O)",
+          "place": "임무 현장",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        }
+      },
+      "day2": {
+        "08:00": {
+          "text": "기상. 철수 준비, 흔적 정리",
+          "place": "임무 현장",
+          "with": [],
+          "tag": "O"
+        },
+        "09:00": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "13:00": {
+          "text": "사무실 도착, 보고 및 정산 (O). 사장답게 마무리 정리",
+          "place": "흥신소 사무실",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "15:00": {
+          "text": "드레스 정리하며 오후엔 잠깐 휴식",
+          "place": "흥신소 사무실",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁, 이번 임무 무사 완수 자축",
+          "place": "흥신소 사무실",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "오늘 하루 정산하다 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    },
+    "mutsuki": {
+      "day1": {
+        "08:00": {
+          "text": "기상. 파티용 드레스랑 정장 둘 다 챙기며 신나함",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "09:30": {
+          "text": "사무실 집합, 브리핑 청취 (O). 어쩐지 소풍 가는 기분",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "임무 현장으로 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "14:00": {
+          "text": "임무 현장 도착. 화려한 저택 구경하며 잠깐 넋 놓음 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "17:00": {
+          "text": "드레스 차림으로 위장 준비 마무리, 사교용 미소 연습 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "19:00": {
+          "text": "파티장 잠입 시작 (O)(W). 손님들 사이로 자연스럽게 섞여듦",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "W"
+        },
+        "22:00": {
+          "text": "정장으로 갈아입고 뒷문 쪽으로 돌아 타겟에게서 정보 캐내는 데 성공 (O)(W)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "W"
+        },
+        "23:30": {
+          "text": "임무 종료, 철수. 긴장 풀리자 갑자기 배고파함 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        }
+      },
+      "day2": {
+        "08:00": {
+          "text": "기상. 어제 여운이 남아 늘어지게 기지개",
+          "place": "임무 현장",
+          "with": [],
+          "tag": "O"
+        },
+        "09:00": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "13:00": {
+          "text": "사무실 도착, 보고 청취 (O). 어제 얘기 재잘재잘",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "15:00": {
+          "text": "드레스랑 정장 정리하다가 어제 얘기하며 낄낄",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁, 이번 임무 무사 완수 자축",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "쿠후후, 오늘 하루 되새기다 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    },
+    "kayoko": {
+      "day1": {
+        "08:00": {
+          "text": "기상. 드레스 갖춰 입고 조용히 장비 점검",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "09:30": {
+          "text": "사무실 집합, 브리핑 청취 (O). 말없이 경청",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "임무 현장으로 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "14:00": {
+          "text": "임무 현장 도착, 경계 태세로 주변 살핌 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "17:00": {
+          "text": "위장 준비 마무리, 표정 굳히고 대기 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "19:00": {
+          "text": "파티장 잠입 시작 (O)(W). 구석에서 조용히 경계",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "W"
+        },
+        "22:00": {
+          "text": "혹시 모를 소란에 대비해 근접 경계 (O)(W)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "W"
+        },
+        "23:30": {
+          "text": "임무 종료, 철수. 별말 없이 다들 무사한지 확인 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        }
+      },
+      "day2": {
+        "08:00": {
+          "text": "기상. 말없이 짐 정리",
+          "place": "임무 현장",
+          "with": [],
+          "tag": "O"
+        },
+        "09:00": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "13:00": {
+          "text": "사무실 도착, 보고 청취 (O)",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "15:00": {
+          "text": "드레스 정리 후 CD 들으며 휴식",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁, 이번 임무 무사 완수 자축",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "CD 들으며 쉬다 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    },
+    "haruka": {
+      "day1": {
+        "08:00": {
+          "text": "기상. 드레스랑 정장 둘 다 챙기며 몇 번이고 매무새 확인",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "09:30": {
+          "text": "사무실 집합, 브리핑 청취 (O). 계획 파트 설명하며 목소리가 살짝 낮게 가라앉음",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "임무 현장으로 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "14:00": {
+          "text": "임무 현장 도착, 저격 포인트와 탈출로 확인 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "17:00": {
+          "text": "드레스 차림으로 위장 준비 마무리, 무전 장비 최종 점검 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "19:00": {
+          "text": "파티장 잠입 시작 (O)(W). 밖에서 무전으로 상황 지원",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "W"
+        },
+        "22:00": {
+          "text": "정장으로 갈아입고 계획대로 퇴로 확보, 목소리 낮게 가라앉아 지시 전달 (O)(W)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "W"
+        },
+        "23:30": {
+          "text": "임무 종료, 철수. 그제야 안도하며 손이 떨림 (O)",
+          "place": "임무 현장",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        }
+      },
+      "day2": {
+        "08:00": {
+          "text": "기상. 어제 긴장이 안 풀렸는지 여전히 조심스러움",
+          "place": "임무 현장",
+          "with": [],
+          "tag": "O"
+        },
+        "09:00": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "13:00": {
+          "text": "사무실 도착, 보고 청취 (O)",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "15:00": {
+          "text": "드레스랑 정장 정리, 오후엔 화분 손질하며 마음 가라앉힘",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁, 이번 임무 무사 완수 자축",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "오늘 하루 돌아보며 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    }
+  }
+}

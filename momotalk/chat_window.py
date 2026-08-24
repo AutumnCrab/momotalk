@@ -14,10 +14,10 @@ import datetime
 
 from PyQt5.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QVBoxLayout, QHBoxLayout,
-    QScrollArea, QSizePolicy, QStackedWidget,
+    QScrollArea, QSizePolicy, QStackedWidget, QScroller, QScrollerProperties,
 )
 from PyQt5.QtCore import (
-    Qt, QRectF, QPointF, QTimer, pyqtSignal, pyqtProperty,
+    Qt, QRectF, QPointF, QEvent, QTimer, pyqtSignal, pyqtProperty,
     QPropertyAnimation, QEasingCurve
 )
 from PyQt5.QtGui import (
@@ -25,7 +25,9 @@ from PyQt5.QtGui import (
 )
 
 from . import theme
+from . import persona_loader
 from .avatar import make_circular_avatar
+from . import sfx
 
 BASE_DIR = get_base_dir()
 
@@ -50,6 +52,14 @@ def _font(px, bold=False):
     return f
 
 
+def _format_birthday(mmdd):
+    try:
+        m, d = mmdd.split("-")
+        return "%d월 %d일" % (int(m), int(d))
+    except Exception:
+        return mmdd
+
+
 class _ElideLabel(QLabel):
     """고정 너비를 넘는 텍스트를 ··· 로 잘라 보여주는 라벨."""
     def __init__(self, text, width, font, color):
@@ -71,6 +81,8 @@ class _ElideLabel(QLabel):
 
 class _BounceScroll(QScrollArea):
     """스크롤바를 숨기고, 부드러운 휠 스크롤 + 끝에서 고무줄(바운스) 효과."""
+    WHEEL_SCALE = 1.45   # 휠 한 칸당 스크롤 거리 배율(기본 1.0 대비 +45%)
+
     def __init__(self):
         super().__init__()
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -121,7 +133,7 @@ class _BounceScroll(QScrollArea):
             return
 
         # 부드러운 스크롤 (목표값으로 애니메이션)
-        target = cur - delta
+        target = cur - int(delta * self.WHEEL_SCALE)
         target = max(bar.minimum(), min(bar.maximum(), target))
         self._anim.stop()
         self._anim.setDuration(170)
@@ -245,12 +257,71 @@ class _TypingDots(QWidget):
             p.drawEllipse(QPointF(cx0 + i * gap, cy - up), 4.0, 4.0)
 
 
+class _ProfilePanel(QWidget):
+    """'학생' 탭에서 이름을 클릭하면 대화 영역 자리를 대신 차지하는 프로필 패널(교체식).
+    떠 있는 창이 아니라 오른쪽 대화 패널과 같은 자리에 스택으로 바꿔 끼운다.
+    돌아가기는 별도 버튼 없이 레일의 '메시지' 탭으로 전환하면 된다(ChatWindow._switch_mode)."""
+
+    def __init__(self, ch, persona):
+        super().__init__()
+        self.setStyleSheet("background:%s;" % theme.CHAT_BG)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(24, 10, 24, 24)
+        body.setSpacing(14)
+        body.setAlignment(Qt.AlignHCenter)
+        body.addStretch(1)
+
+        AV_SIZE = 154   # 기존 96 대비 +60%
+        av = QLabel()
+        av.setFixedSize(AV_SIZE, AV_SIZE)
+        av.setStyleSheet("background:transparent;")
+        av.setPixmap(make_circular_avatar(ch["profile_img"], AV_SIZE, ch["name"]))
+        body.addWidget(av, 0, Qt.AlignHCenter)
+
+        name = QLabel(ch.get("full_name") or ch["name"])
+        name.setAlignment(Qt.AlignCenter)
+        name.setStyleSheet(
+            "color:%s;font-weight:bold;font-size:18px;font-family:'%s';"
+            % (theme.TEXT_DARK, theme.FONT_FAMILY)
+        )
+        body.addWidget(name)
+
+        intro = QLabel(ch.get("intro") or "")
+        intro.setAlignment(Qt.AlignCenter)
+        intro.setWordWrap(True)
+        intro.setStyleSheet(
+            "color:%s;font-size:13px;font-family:'%s';"
+            % (theme.TEXT_GRAY, theme.FONT_FAMILY)
+        )
+        body.addWidget(intro)
+
+        birthday = persona.get("birthday") if persona else None
+        if birthday:
+            pill = QLabel("\U0001F382  %s" % _format_birthday(birthday))
+            pill.setAlignment(Qt.AlignCenter)
+            pill.setStyleSheet(
+                "color:%s;font-size:12px;font-family:'%s';border:1px solid #E3E3EA;"
+                "border-radius:13px;padding:5px 14px;background:#FAFAFB;"
+                % (theme.TEXT_DARK, theme.FONT_FAMILY)
+            )
+            body.addWidget(pill, 0, Qt.AlignHCenter)
+
+        body.addStretch(1)
+        outer.addLayout(body, 1)
+
+
 class ChatWindow(QWidget):
     message_sent = pyqtSignal(str)     # 선생님이 톡을 보냄 (char key)
     selection_changed = pyqtSignal(str)  # 다른 학생 대화로 전환함 (char key) — 입력창 잠금 재동기화용
-    debug_proactive_requested = pyqtSignal()  # [디버그] F8: 깨어있는 학생 전원 대상 즉시 선톡 트리거
     typing_changed = pyqtSignal(str)   # 입력창에 실제 텍스트 변경(타이핑)이 있음 (char key)
     window_hidden = pyqtSignal()       # 대화창이 닫힘(숨겨짐) — 플로팅 아이콘 배지 재동기화용
+    minimize_requested = pyqtSignal()  # 헤더 '−' 클릭 — 실제 애니메이션/숨김은 main.py(아이콘 위치를 앎)가 처리
+    close_requested = pyqtSignal()     # 헤더 '✕' 클릭 — 위와 동일한 이유로 main.py가 처리
+    restore_requested = pyqtSignal()   # 최소화 상태 해제(작업표시줄 아이콘 클릭 포함) — main.py가 복원 애니메이션 재생
 
     def __init__(self, characters, store, unread=None, birthday_keys=None):
         super().__init__()
@@ -259,6 +330,7 @@ class ChatWindow(QWidget):
         self.unread = unread if unread is not None else {}
         self.birthday_keys = birthday_keys or set()   # 오늘 생일인 학생 key 집합(정적, 하루 단위)
         self.selected_key = characters[0]["key"] if characters else None
+        self._profile_key = None   # '학생' 탭에서 지금 프로필로 열려 있는 키(채팅 선택과 별개)
         self.mode = "message"
         self._typing_key = None
         self._rail_buttons = {}
@@ -301,8 +373,27 @@ class ChatWindow(QWidget):
         path.addRoundedRect(QRectF(self.rect()), 16, 16)
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
-    def resizeEvent(self, e):
+    def suspend_mask(self):
+        """애니메이션(빠른 연속 resize) 도중 매 프레임 마스크 재계산을 끄고,
+        전체 사각형을 그대로 둬 잔상(이전 크기 마스크가 새 프레임을 잘라먹는 현상)을 막는다."""
+        self._mask_suspended = True
+        self.clearMask()
+
+    def resume_mask(self):
+        self._mask_suspended = False
         self._update_mask()
+
+    def resizeEvent(self, e):
+        if not getattr(self, "_mask_suspended", False):
+            self._update_mask()
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == QEvent.WindowStateChange:
+            was_minimized = bool(e.oldState() & Qt.WindowMinimized)
+            now_minimized = bool(self.windowState() & Qt.WindowMinimized)
+            if was_minimized and not now_minimized:
+                self.restore_requested.emit()
 
     def hideEvent(self, e):
         # 대화창이 닫히는 순간, 열려 있는 동안 안 띄웠던 안읽음 개수를
@@ -312,10 +403,8 @@ class ChatWindow(QWidget):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
+            sfx.play("off")
             self.hide()
-        elif e.key() == Qt.Key_F8:
-            # [디버그 전용] 실제 대기 없이 즉시 선톡 트리거 재현용. 배포판에선 몰라도 무해함.
-            self.debug_proactive_requested.emit()
 
     # ───────────────────────── UI ─────────────────────────
     def _build_ui(self):
@@ -329,7 +418,9 @@ class ChatWindow(QWidget):
         body.setSpacing(0)
         body.addWidget(self._build_rail())
         body.addWidget(self._build_stack())
-        body.addWidget(self._build_conversation_panel(), 1)
+        self._right_stack = QStackedWidget()
+        self._right_stack.addWidget(self._build_conversation_panel())   # index 0: 대화
+        body.addWidget(self._right_stack, 1)
         outer.addLayout(body, 1)
 
     def _build_header(self):
@@ -358,17 +449,26 @@ class ChatWindow(QWidget):
         title.setStyleSheet(
             "color:white;font-weight:bold;font-size:17px;font-family:'%s';" % theme.FONT_FAMILY
         )
-        close = QPushButton("\u2715")
-        close.setFixedSize(28, 28)
-        close.setCursor(Qt.PointingHandCursor)
-        close.setStyleSheet(
+        btn_style = (
             "QPushButton{color:white;border:none;font-size:14px;}"
             "QPushButton:hover{background:rgba(255,255,255,0.25);border-radius:14px;}"
         )
-        close.clicked.connect(self.hide)
+
+        minimize = QPushButton("\u2212")
+        minimize.setFixedSize(28, 28)
+        minimize.setCursor(Qt.PointingHandCursor)
+        minimize.setStyleSheet(btn_style)
+        minimize.clicked.connect(self.minimize_requested.emit)
+
+        close = QPushButton("\u2715")
+        close.setFixedSize(28, 28)
+        close.setCursor(Qt.PointingHandCursor)
+        close.setStyleSheet(btn_style)
+        close.clicked.connect(self.close_requested.emit)
         h.addWidget(logo)
         h.addWidget(title)
         h.addStretch(1)
+        h.addWidget(minimize)
         h.addWidget(close)
         return header
 
@@ -409,7 +509,7 @@ class ChatWindow(QWidget):
         )
         outer.addWidget(cap)
 
-        scroll = QScrollArea()
+        scroll = _BounceScroll()   # 우측 대화창과 같은 부드러운 스크롤 + 끝에서 바운스(스크롤바는 숨김)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea{border:none;background:%s;}" % bg)
@@ -428,20 +528,22 @@ class ChatWindow(QWidget):
             v.addWidget(self._char_row(ch, ch["snippet"], self._msg_rows,
                                        snippet_store=self._msg_snippets, show_status=True))
         v.addStretch(1)
+        self._msg_list_layout = v
         return page
 
     def _build_friend_page(self):
         page, v = self._list_scaffold("학생 (%d)" % len(self.characters), theme.FRIEND_BG)
         for ch in self.characters:
             v.addWidget(self._char_row(ch, ch.get("intro") or "소개글 없음",
-                                       self._friend_rows, show_status=True))
+                                       self._friend_rows, show_status=True,
+                                       on_click=self._show_profile_card))
         v.addStretch(1)
         return page
 
-    def _char_row(self, ch, secondary, rows_dict, snippet_store=None, show_status=False):
+    def _char_row(self, ch, secondary, rows_dict, snippet_store=None, show_status=False, on_click=None):
         row = _Row(ch["key"])
         row.setCursor(Qt.PointingHandCursor)
-        row.clicked.connect(self._select)
+        row.clicked.connect(on_click or self._select)
         rows_dict[ch["key"]] = row
 
         h = QHBoxLayout(row)
@@ -533,6 +635,19 @@ class ChatWindow(QWidget):
         for dot in self._status_dots.get(key, []):
             dot.setStyleSheet("background:%s;border-radius:6px;border:2px solid white;" % color)
 
+    def _enable_drag_scroll(self, scroll_area):
+        """말풍선 위를 눌러서 드래그해도 스크롤되도록(터치패널 팬 제스처). 말풍선(QLabel)이
+        마우스 이벤트를 먼저 가져가서 QScrollArea 자체의 mousePressEvent 만으론 안 잡히므로,
+        Qt 내장 QScroller(뷰포트 단위로 제스처를 가로챔)를 씀 — 자체 구현보다 훨씬 간단하고 안정적."""
+        viewport = scroll_area.viewport()
+        QScroller.grabGesture(viewport, QScroller.LeftMouseButtonGesture)
+        scroller = QScroller.scroller(viewport)
+        props = scroller.scrollerProperties()
+        # 관성/바운스는 이미 우리 커스텀 휠 바운스가 있으니, QScroller 쪽 오버슈트는 꺼서 안 겹치게 함
+        props.setScrollMetric(QScrollerProperties.HorizontalOvershootPolicy, QScrollerProperties.OvershootAlwaysOff)
+        props.setScrollMetric(QScrollerProperties.VerticalOvershootPolicy, QScrollerProperties.OvershootAlwaysOff)
+        scroller.setScrollerProperties(props)
+
     def _build_conversation_panel(self):
         panel = QFrame()
         panel.setStyleSheet("background:%s;" % theme.CHAT_BG)
@@ -550,6 +665,7 @@ class ChatWindow(QWidget):
         self._convo_layout.setSpacing(8)
         self._convo_layout.addStretch(1)
         self._scroll.setWidget(container)
+        self._enable_drag_scroll(self._scroll)
         v.addWidget(self._scroll, 1)
 
         # 하단 입력창
@@ -590,12 +706,18 @@ class ChatWindow(QWidget):
 
     # ───────────────────────── 동작 ─────────────────────────
     def _switch_mode(self, kind):
+        sfx.play("touch")
         self.mode = kind
         self.stack.setCurrentIndex(0 if kind == "message" else 1)
         for k, btn in self._rail_buttons.items():
             btn.set_selected(k == kind)
+        if kind == "message":
+            # 프로필 패널이 떠 있었으면 대화로 복귀. 학생 탭 쪽으로 갈 땐 건드리지 않는다 —
+            # 어떤 채팅을 보고 있었는지와 프로필 패널 표시 여부는 서로 독립적으로 둔다.
+            self._hide_profile_card()
 
     def _select(self, key):
+        sfx.play("touch")
         self.selected_key = key
         self.unread[key] = 0          # 대화를 열어 봤으니 읽음 처리
         for k in self._friend_rows:
@@ -605,11 +727,36 @@ class ChatWindow(QWidget):
         self.refresh()
         self.selection_changed.emit(key)
 
+    def _show_profile_card(self, key):
+        """대화 영역 자리를 프로필 패널로 교체(플로팅 아님) — '메시지' 탭으로 돌아가면 대화로 복귀."""
+        sfx.play("touch")
+        ch = self._char_by_key(key)
+        persona = persona_loader.load_persona(key)
+        if self._right_stack.count() > 1:
+            old = self._right_stack.widget(1)
+            self._right_stack.removeWidget(old)
+            old.deleteLater()
+        panel = _ProfilePanel(ch, persona)
+        self._right_stack.addWidget(panel)
+        self._right_stack.setCurrentIndex(1)
+        self._profile_key = key
+        for k in self._friend_rows:
+            self._style_row(self._friend_rows, k)
+
+    def _hide_profile_card(self):
+        self._right_stack.setCurrentIndex(0)
+        self._profile_key = None
+        for k in self._friend_rows:
+            self._style_row(self._friend_rows, k)
+
     def _style_row(self, rows, key):
         row = rows.get(key)
         if row is None:
             return
-        if key == self.selected_key:
+        # 메시지 목록은 지금 보고 있는 채팅(selected_key), 학생 목록은 지금 열려 있는
+        # 프로필(_profile_key) 기준으로 각각 따로 강조한다 — 서로 안 엮이게.
+        active_key = self.selected_key if rows is self._msg_rows else self._profile_key
+        if key == active_key:
             # 라운드 없이 끝→끝 전체 강조
             row.setStyleSheet("_Row{background:%s;}" % theme.LIST_SELECTED)
         else:
@@ -683,7 +830,24 @@ class ChatWindow(QWidget):
                 lbl.setText(msgs[-1][1])
             self._update_badge(c["key"])
 
+        self._resort_msg_list()
         QTimer.singleShot(0, self._scroll_to_bottom)
+
+    def _resort_msg_list(self):
+        """'메시지' 탭 목록을 최근 대화(마지막 메시지 시각)가 최신인 순으로 맨 위부터 정렬.
+        아직 대화가 없는 학생은 캐릭터 등록 순서 그대로 맨 아래에 남는다."""
+        def last_ts(key):
+            msgs = self.store.get(key, [])
+            if not msgs:
+                return ""
+            entry = msgs[-1]
+            return entry[2] if len(entry) > 2 else ""
+
+        order = sorted(self.characters, key=lambda c: last_ts(c["key"]), reverse=True)
+        for i, c in enumerate(order):
+            row = self._msg_rows.get(c["key"])
+            if row is not None:
+                self._msg_list_layout.insertWidget(i, row)
 
     def _scroll_to_bottom(self):
         """대화 갱신 직후 항상 맨 아래로 스냅.

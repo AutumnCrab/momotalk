@@ -12,19 +12,28 @@ import os
 from momotalk.paths import get_base_dir
 import json
 import re
+import time
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
 BASE_DIR = get_base_dir()
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
+MAX_ATTEMPTS = 3       # DNS/연결 일시 오류 대비 재시도 횟수(맨 처음 시도 포함)
+RETRY_DELAY_SEC = 1.5
+
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
 def load_config():
     """config.json 읽기. 없거나 깨지면 빈 키로 안전하게 반환.
-    weather_api_key 는 선택 항목 — 없으면 날씨 기능만 조용히 꺼진다."""
-    cfg = {"gemini_api_key": "", "model": DEFAULT_MODEL, "weather_api_key": ""}
+    weather_api_key 는 선택 항목 — 없으면 날씨 기능만 조용히 꺼진다.
+    provider 는 "gemini"(기본) 또는 "openai" — 대화 응답을 어느 쪽 API로 받을지."""
+    cfg = {
+        "gemini_api_key": "", "model": DEFAULT_MODEL, "weather_api_key": "",
+        "provider": "gemini", "openai_api_key": "", "openai_model": DEFAULT_OPENAI_MODEL,
+    }
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             data = json.load(f)
@@ -32,6 +41,10 @@ def load_config():
             cfg["gemini_api_key"] = str(data.get("gemini_api_key", "")).strip()
             cfg["model"] = str(data.get("model", DEFAULT_MODEL)).strip() or DEFAULT_MODEL
             cfg["weather_api_key"] = str(data.get("weather_api_key", "")).strip()
+            provider = str(data.get("provider", "gemini")).strip().lower()
+            cfg["provider"] = provider if provider in ("gemini", "openai") else "gemini"
+            cfg["openai_api_key"] = str(data.get("openai_api_key", "")).strip()
+            cfg["openai_model"] = str(data.get("openai_model", DEFAULT_OPENAI_MODEL)).strip() or DEFAULT_OPENAI_MODEL
     except FileNotFoundError:
         print("[Gemini] config.json 이 없습니다. (루트에 만들어 키를 넣어주세요)")
     except Exception as e:
@@ -169,24 +182,32 @@ class GeminiWorker(QThread):
         self.contents = _sanitize_contents(contents)
 
     def run(self):
-        try:
-            from google import genai
-            from google.genai import types
+        # DNS 조회 실패(getaddrinfo failed) 같은 순간적인 네트워크 오류는 재시도하면
+        # 대부분 바로 풀린다 — 오류 종류를 세세히 가리지 않고 그냥 몇 번 더 시도한다.
+        last_error = None
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                from google import genai
+                from google.genai import types
 
-            client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_content(
-                model=self.model,
-                contents=self.contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=self.system_prompt,
-                    response_mime_type="application/json",
-                    temperature=0.9,
-                ),
-            )
-            messages = parse_messages(getattr(response, "text", None))
-            if not messages:
-                self.failed.emit(self.char_key, "빈 응답")
+                client = genai.Client(api_key=self.api_key)
+                response = client.models.generate_content(
+                    model=self.model,
+                    contents=self.contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=self.system_prompt,
+                        response_mime_type="application/json",
+                        temperature=0.9,
+                    ),
+                )
+                messages = parse_messages(getattr(response, "text", None))
+                if not messages:
+                    self.failed.emit(self.char_key, "빈 응답")
+                    return
+                self.done.emit(self.char_key, messages)
                 return
-            self.done.emit(self.char_key, messages)
-        except Exception as e:
-            self.failed.emit(self.char_key, repr(e))
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_ATTEMPTS - 1:
+                    time.sleep(RETRY_DELAY_SEC)
+        self.failed.emit(self.char_key, repr(last_error))

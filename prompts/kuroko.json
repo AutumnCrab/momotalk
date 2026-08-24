@@ -474,13 +474,13 @@
       },
       "20:00": {
         "text": "귀가 후 정비",
-        "place": null,
+        "place": "집",
         "with": [],
         "tag": null
       },
       "21:00": {
         "text": "아비도스 사막으로 자전거 타고 이동(W)",
-        "place": "아비도스 사막",
+        "place": null,
         "with": [],
         "tag": "W",
         "weather_sensitive": true,
@@ -490,7 +490,7 @@
           "tag": null
         }
       },
-      "22:00": {
+      "23:00": {
         "text": "정처없이 자전거를 끌며 아비도스 사막을 돌아다님",
         "place": "아비도스 사막",
         "with": [],

@@ -68,6 +68,7 @@ def load_characters():
         characters.append({
             "key": key,
             "name": c.get("name", key),
+            "full_name": c.get("full_name", c.get("name", key)),
             "profile_img": os.path.join(BASE_DIR, c.get("profile_img", "")) if c.get("profile_img") else "",
             "intro": c.get("intro", ""),
             "schedule": schedule,
@@ -76,7 +77,7 @@ def load_characters():
 
     if not characters:
         characters.append({
-            "key": "shiroko", "name": "시로코",
+            "key": "shiroko", "name": "시로코", "full_name": "스나오오카미 시로코",
             "profile_img": "", "intro": "", "schedule": [], "snippet": "안녕, 선생님.",
         })
     return characters

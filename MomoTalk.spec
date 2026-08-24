@@ -39,7 +39,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,          # 콘솔창 없이 실행(디버그 필요하면 True로 잠깐 바꾸세요)
-    icon=None,               # assets/momotalk.png를 .ico로 변환해서 넣고 싶으면 여기 경로 지정
+    icon='assets/momotalk.ico',
 )
 
 coll = COLLECT(

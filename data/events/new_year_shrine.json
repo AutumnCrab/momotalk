@@ -1,0 +1,422 @@
+{
+  "id": "new_year_shrine",
+  "name": "신년 참배",
+  "_설명": "1월 1~3일 중 랜덤 하루. 후리소데 차려입고 다 같이 신사에 참배하러 가는 날.",
+  "trigger": {
+    "months": [
+      1
+    ],
+    "day_min": 1,
+    "day_max": 3,
+    "start_weekday": null,
+    "duration_days": 1
+  },
+  "participants": [
+    "aru",
+    "mutsuki",
+    "kayoko",
+    "haruka"
+  ],
+  "awake_override": {
+    "aru": {
+      "day1": [
+        "08:00-23:30"
+      ]
+    },
+    "mutsuki": {
+      "day1": [
+        "08:00-23:30"
+      ]
+    },
+    "kayoko": {
+      "day1": [
+        "08:00-23:30"
+      ]
+    },
+    "haruka": {
+      "day1": [
+        "08:00-23:30"
+      ]
+    }
+  },
+  "event_message_window": [
+    [
+      "15:30",
+      "18:00"
+    ],
+    [
+      "21:00",
+      "22:00"
+    ]
+  ],
+  "schedules": {
+    "aru": {
+      "day1": {
+        "08:00": {
+          "text": "기상, 후리소데로 갈아입기 (O). 사장답게 안 어울린다는 말 절대 안 믿음",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": "O"
+        },
+        "09:30": {
+          "text": "사무실 집합, 다 같이 신사로 이동 시작",
+          "place": null,
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "신사 도착, 참배 (O). 사장답게 흥신소 번창을 크게 빎",
+          "place": "신사",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "11:30": {
+          "text": "오미쿠지 뽑고 소원 빌기 (O)(X). 대길 나오자 의기양양",
+          "place": "신사",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "X"
+        },
+        "13:00": {
+          "text": "신사 근처 노점에서 점심 (O)",
+          "place": "신사",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "14:30": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "15:30": {
+          "text": "사무실 도착, 후리소데 정리하고 오후엔 잠깐 휴식",
+          "place": "흥신소 사무실",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁",
+          "place": "흥신소 사무실",
+          "with": [
+            "mutsuki",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "오늘 하루 정산하다 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    },
+    "mutsuki": {
+      "day1": {
+        "08:00": {
+          "text": "기상, 후리소데로 갈아입기 (O). 거울 앞에서 한참 빙글빙글 돎",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": "O"
+        },
+        "09:30": {
+          "text": "사무실 집합, 다 같이 신사로 이동 시작",
+          "place": null,
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "신사 도착, 참배 (O)",
+          "place": "신사",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "11:30": {
+          "text": "오미쿠지 뽑고 소원 빌기 (O)(X). 결과 보고 쿠후후 웃음",
+          "place": "신사",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "X"
+        },
+        "13:00": {
+          "text": "신사 근처 노점에서 점심 (O). 다코야키 나눠 먹음",
+          "place": "신사",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "14:30": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "15:30": {
+          "text": "사무실 도착, 후리소데 정리하며 오늘 사진 자랑",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "kayoko",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "쿠후후, 오늘 하루 되새기다 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    },
+    "kayoko": {
+      "day1": {
+        "08:00": {
+          "text": "기상, 후리소데로 갈아입기 (O)",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": "O"
+        },
+        "09:30": {
+          "text": "사무실 집합, 다 같이 신사로 이동 시작",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "신사 도착, 참배 (O). 말없이 두 손 모음",
+          "place": "신사",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "11:30": {
+          "text": "오미쿠지 뽑고 소원 빌기 (O)(X)",
+          "place": "신사",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "X"
+        },
+        "13:00": {
+          "text": "신사 근처 노점에서 점심 (O)",
+          "place": "신사",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "14:30": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": "O"
+        },
+        "15:30": {
+          "text": "사무실 도착, 후리소데 정리 후 CD 들으며 휴식",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "haruka"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "CD 들으며 쉬다 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    },
+    "haruka": {
+      "day1": {
+        "08:00": {
+          "text": "기상, 후리소데로 갈아입기 (O). 낯선 옷차림에 안절부절",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": "O"
+        },
+        "09:30": {
+          "text": "사무실 집합, 다 같이 신사로 이동 시작",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "10:30": {
+          "text": "신사 도착, 참배 (O). 조심스럽게 두 손 모음",
+          "place": "신사",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "11:30": {
+          "text": "오미쿠지 뽑고 소원 빌기 (O)(X)",
+          "place": "신사",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "X"
+        },
+        "13:00": {
+          "text": "신사 근처 노점에서 점심 (O)",
+          "place": "신사",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "14:30": {
+          "text": "흥신소 사무실로 복귀 이동",
+          "place": null,
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": "O"
+        },
+        "15:30": {
+          "text": "사무실 도착, 후리소데 정리하고 오후엔 화분 손질",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": null
+        },
+        "19:00": {
+          "text": "다 같이 저녁",
+          "place": "흥신소 사무실",
+          "with": [
+            "aru",
+            "mutsuki",
+            "kayoko"
+          ],
+          "tag": null
+        },
+        "21:00": {
+          "text": "각자 방으로 돌아가 개인 시간",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        },
+        "23:00": {
+          "text": "오늘 하루 돌아보며 취침",
+          "place": "흥신소 사무실",
+          "with": [],
+          "tag": null
+        }
+      }
+    }
+  }
+}
