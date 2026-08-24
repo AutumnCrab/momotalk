@@ -844,7 +844,7 @@ def current_time_label(now=None):
     return "%s요일 %s %02d:%02d" % (wk, period, h, minute)
 
 
-def build_system_prompt(persona, now=None, wake_note="", proactive_note="", event_note=""):
+def build_system_prompt(persona, now=None, wake_note="", proactive_note="", event_note="", continuity_note=""):
     """페르소나 dict → Gemini 시스템 프롬프트 문자열."""
     if now is None:
         now = datetime.datetime.now()
@@ -930,6 +930,9 @@ def build_system_prompt(persona, now=None, wake_note="", proactive_note="", even
     if proactive_note:
         lines.append("")
         lines.append(proactive_note)
+    if continuity_note:
+        lines.append("")
+        lines.append(continuity_note)
 
     fs = persona.get("few_shot", [])
     if fs:
@@ -1207,6 +1210,45 @@ def build_history(store_list, limit=20, gap_threshold_min=60):
     return contents
 
 
+def _detect_proactive_burst(store_list):
+    """
+    지금 들어온 선생님 톡 바로 앞이, 전부 reason == 'proactive'(학생이 스스로 먼저 말 건 것)인
+    연속 recv 블록인지 확인한다. 모델은 대화 기록의 role 순서만 보고는 '내가 방금 먼저
+    말 걸었다'와 '원래 답장 흐름이었다'를 구분할 방법이 없다(둘 다 model→user 순서로 똑같이
+    보임) — 하지만 코드는 저장된 reason 메타데이터로 정확히 구분할 수 있다.
+    맞으면 그 recv 블록의 텍스트 리스트(순서대로)를, 아니면 None을 반환한다.
+    한 번 답장이 오간 뒤에는(즉 그 recv 블록 뒤에 이미 다른 recv가 있으면) 더 이상 걸리지
+    않는다 — 첫 답장 상황에만 한정된다.
+    """
+    i = len(store_list) - 1
+    while i >= 0 and store_list[i][0] == "send":
+        i -= 1
+    texts = []
+    while i >= 0:
+        entry = store_list[i]
+        if entry[0] != "recv":
+            break
+        reason = entry[3] if len(entry) > 3 else None
+        if reason != "proactive":
+            return None
+        texts.append(entry[1])
+        i -= 1
+    if not texts:
+        return None
+    texts.reverse()
+    return texts
+
+
+def build_continuity_note(burst_texts):
+    quoted = " / ".join(burst_texts)
+    return (
+        "[방금 먼저 말 건 상황 - 사실] 너는 방금 이렇게 먼저 말을 걸었다: \"%s\" "
+        "지금 선생님의 메시지는 그 말에 대한 첫 답장이다. 이미 스스로 방금 말한 내용"
+        "(질문, 지금 하던 일 등)을 다시 묻거나 다시 설명하지 마라. 선생님의 답에 자연스럽게"
+        " 이어서 반응하되, 방금 한 말을 반복하지 않는다." % quoted
+    )
+
+
 def assemble(key, store_list, now=None, history_limit=20, wake_note="", proactive_note="", event_note=""):
     """
     한 번에: 학생 key + 현재까지의 대화 → (시스템 프롬프트, contents) 반환.
@@ -1219,8 +1261,13 @@ def assemble(key, store_list, now=None, history_limit=20, wake_note="", proactiv
     persona = load_persona(key)
     if persona is None:
         return None, None
+    continuity_note = ""
+    burst = _detect_proactive_burst(store_list)
+    if burst:
+        continuity_note = build_continuity_note(burst)
     system_prompt = build_system_prompt(
-        persona, now=now, wake_note=wake_note, proactive_note=proactive_note, event_note=event_note
+        persona, now=now, wake_note=wake_note, proactive_note=proactive_note, event_note=event_note,
+        continuity_note=continuity_note,
     )
     contents = build_history(store_list, limit=history_limit)
     if not contents and (wake_note or proactive_note or event_note):
