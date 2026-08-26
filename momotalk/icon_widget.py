@@ -22,6 +22,7 @@ from PyQt5.QtGui import QPainter, QColor, QPainterPath, QFont, QPen, QPixmap, QC
 
 from . import theme
 from . import autostart
+from . import notify_settings
 
 BASE_DIR = get_base_dir()
 LOGO_PNG = os.path.join(BASE_DIR, "assets", "momotalk.png")
@@ -324,6 +325,8 @@ class MomoTalkIcon(QWidget):
         act_settings = menu.addAction("초기 설정")
         autostart_on = autostart.is_enabled()
         act_autostart = menu.addAction("시작 시 자동 실행 %s" % ("(off)" if autostart_on else "(on)"))
+        notify_on = notify_settings.is_enabled()
+        act_notify = menu.addAction("알림 %s" % ("(비활성화)" if notify_on else "(활성화)"))
         menu.addSeparator()
         act_quit = menu.addAction("종료")
         chosen = menu.exec_(global_pos)
@@ -342,6 +345,11 @@ class MomoTalkIcon(QWidget):
                 autostart.disable()
             else:
                 autostart.enable()
+        elif chosen == act_notify:
+            if notify_on:
+                notify_settings.disable()
+            else:
+                notify_settings.enable()
         elif chosen == act_quit:
             self._confirm_quit(global_pos)
 

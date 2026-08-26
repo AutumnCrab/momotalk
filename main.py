@@ -42,6 +42,7 @@ from momotalk.gemini_client import GeminiWorker, load_config
 from momotalk.openai_client import OpenAIWorker
 from momotalk.student_state import StudentStateMachine
 from momotalk import autostart
+from momotalk import notify_settings
 from momotalk.toast import ToastManager
 from momotalk import voice
 from momotalk import sfx
@@ -447,7 +448,11 @@ class MomoApp:
         self._tray.setToolTip("모모톡 (안 읽은 메시지 %d)" % total if total > 0 else "모모톡")
 
     def _notify_tray_message(self, char_key, text, is_first):
-        """플로팅 아이콘이 숨겨져 있을 때도 놓치지 않도록, 새 메시지를 커스텀 알림 팝업으로 띄운다."""
+        """플로팅 아이콘이 숨겨져 있을 때도 놓치지 않도록, 새 메시지를 커스텀 알림 팝업으로 띄운다.
+        아이콘 메뉴에서 알림을 꺼뒀으면(notify_settings) 팝업과 그에 딸린 효과음/보이스도
+        함께 조용히 건너뛴다(안읽음 배지는 그대로 남으므로 나중에 직접 확인할 수 있다)."""
+        if not notify_settings.is_enabled():
+            return
         char = next((c for c in self.characters if c["key"] == char_key), None)
         if char is None:
             return
