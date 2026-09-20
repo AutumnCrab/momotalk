@@ -12,11 +12,16 @@ import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko",
-        "aru", "mutsuki", "kayoko", "haruka"]
+        "aru", "mutsuki", "kayoko", "haruka",
+        "momoi", "midori", "yuzu", "aris", "kei",
+        "hina", "ako", "iori", "chinatsu"]
 NAME_MAP = {
     "shiroko": "시로코", "hoshino": "호시노", "serika": "세리카",
     "ayane": "아야네", "nonomi": "노노미", "kuroko": "시로코*테러",
     "aru": "아루", "mutsuki": "무츠키", "kayoko": "카요코", "haruka": "하루카",
+    "momoi": "모모이", "midori": "미도리", "yuzu": "유즈",
+    "aris": "아리스", "kei": "케이", "hina": "히나", "ako": "아코",
+    "iori": "이오리", "chinatsu": "치나츠",
 }
 
 

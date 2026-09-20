@@ -5,7 +5,7 @@
   },
   "집": {
     "category": "집",
-    "entry_count": 105
+    "entry_count": 238
   },
   "동아리실": {
     "category": "학교",
@@ -29,7 +29,7 @@
   },
   "게헨나 상점가": {
     "category": "상점",
-    "entry_count": 10
+    "entry_count": 12
   },
   "아비도스 인근": {
     "category": "야외",
@@ -114,5 +114,61 @@
   "신사": {
     "category": "야외",
     "entry_count": 0
+  },
+  "게임개발부 부실": {
+    "category": "학교",
+    "entry_count": 108
+  },
+  "초현상특무부 부실": {
+    "category": "학교",
+    "entry_count": 9
+  },
+  "밀레니엄 교실": {
+    "category": "학교",
+    "entry_count": 25
+  },
+  "밀레니엄 교내": {
+    "category": "학교",
+    "entry_count": 5
+  },
+  "게임 행사장": {
+    "category": "상점",
+    "entry_count": 3
+  },
+  "오락실": {
+    "category": "상점",
+    "entry_count": 3
+  },
+  "타 학원 인근": {
+    "category": "야외",
+    "entry_count": 1
+  },
+  "선도부실": {
+    "category": "학교",
+    "entry_count": 54
+  },
+  "선도부 의무실": {
+    "category": "학교",
+    "entry_count": 10
+  },
+  "선도부 훈련장": {
+    "category": "학교",
+    "entry_count": 12
+  },
+  "게헨나 교내": {
+    "category": "학교",
+    "entry_count": 7
+  },
+  "게헨나 식당": {
+    "category": "식당",
+    "entry_count": 16
+  },
+  "게헨나 자치구": {
+    "category": "야외",
+    "entry_count": 24
+  },
+  "만마전 회의실": {
+    "category": "학교",
+    "entry_count": 4
   }
 }

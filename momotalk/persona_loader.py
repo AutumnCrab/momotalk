@@ -42,6 +42,15 @@ _ADDRESS_TARGET_NAMES = {
     "mutsuki": "무츠키",
     "kayoko": "카요코",
     "haruka": "하루카",
+    "momoi": "모모이",
+    "midori": "미도리",
+    "yuzu": "유즈",
+    "aris": "아리스",
+    "kei": "케이",
+    "hina": "히나",
+    "ako": "아코",
+    "iori": "이오리",
+    "chinatsu": "치나츠",
 }
 
 
@@ -96,6 +105,13 @@ def _entry_place(entry):
     """신규 dict 항목이면 place(문자열 또는 None), 구형 문자열이면 None(구조화 정보 없음)."""
     if isinstance(entry, dict):
         return entry.get("place")
+    return None
+
+
+def _entry_tag(entry):
+    """구조화 activity 항목의 tag를 반환. 구형 문자열은 None."""
+    if isinstance(entry, dict):
+        return entry.get("tag")
     return None
 
 
@@ -322,7 +338,14 @@ _PLACE_KEYWORDS = ["시바세키", "동아리실", "학교", "아비도스", "�
 # 두 그룹이 우연히 같은 장소 문자열을 쓰는 경우 place 일치만으로 서로 잘못 엮인다.
 _ABYDOS_KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko"]
 _HUNGSINSO68_KEYS = ["aru", "mutsuki", "kayoko", "haruka"]
-_STUDENT_GROUPS = [_ABYDOS_KEYS, _HUNGSINSO68_KEYS]
+_GAME_DEVELOPMENT_KEYS = ["momoi", "midori", "yuzu", "aris", "kei"]
+_PREFECT_TEAM_KEYS = ["hina", "ako", "iori", "chinatsu"]
+_STUDENT_GROUPS = [
+    _ABYDOS_KEYS,
+    _HUNGSINSO68_KEYS,
+    _GAME_DEVELOPMENT_KEYS,
+    _PREFECT_TEAM_KEYS,
+]
 
 
 def _group_peers(char_key):
@@ -350,6 +373,8 @@ def _co_present_legacy_estimate(char_key, me, my_desc, now):
     for other_key in _group_peers(char_key):
         other = load_persona(other_key)
         if other is None:
+            continue
+        if availability_status(other, now) == "sleep":
             continue
         _, other_desc = current_activity(other, now)
         if not other_desc:
@@ -403,6 +428,10 @@ def build_co_present_note(char_key, now=None):
         for other_key in _group_peers(char_key):
             other = load_persona(other_key)
             if other is None:
+                continue
+            # 잠든 학생은 마지막 activity 장소가 남아 있어도 현재 동석자로 취급하지 않는다.
+            # 취침 중 실제 위치를 단정할 수 없으므로 '따로 있음' 목록에도 넣지 않는다.
+            if availability_status(other, now) == "sleep":
                 continue
             _, other_entry = current_activity_entry(other, now)
             if other_entry is None:
@@ -734,7 +763,11 @@ def activity_marker(persona, now=None):
     """
     if now is None:
         now = datetime.datetime.now()
-    _, desc = current_activity(persona, now)
+    _, entry = current_activity_entry(persona, now)
+    tag = _entry_tag(entry)
+    if tag in ("S", "W"):
+        return tag
+    desc = _entry_text(entry)
     if not desc:
         return None
     if "(S)" in desc:

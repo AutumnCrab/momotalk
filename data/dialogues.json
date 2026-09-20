@@ -93,6 +93,51 @@
       "schedule": [
         { "day": "everyday", "time": "07:30", "messages": ["선생님, 좋은 아침입니다⋯! 저, 방해된 건 아니죠⋯?"] }
       ]
+    },
+    "momoi": {
+      "name": "모모이", "full_name": "사이바 모모이",
+      "profile_img": "assets/profiles/momoi.png", "intro": "게임 외길 인생",
+      "schedule": [{ "day": "everyday", "time": "08:00", "messages": ["선생님! 오늘도 퀘스트 시작이야!"] }]
+    },
+    "midori": {
+      "name": "미도리", "full_name": "사이바 미도리",
+      "profile_img": "assets/profiles/midori.png", "intro": "재미있는 게임 추천받아요.",
+      "schedule": [{ "day": "everyday", "time": "08:00", "messages": ["좋은 아침이에요, 선생님. 오늘도 잘 부탁드려요."] }]
+    },
+    "yuzu": {
+      "name": "유즈", "full_name": "하나오카 유즈",
+      "profile_img": "assets/profiles/yuzu.png", "intro": "404 Not Found",
+      "schedule": [{ "day": "everyday", "time": "09:00", "messages": ["서, 선생님…… 오늘도 힘내세요."] }]
+    },
+    "aris": {
+      "name": "아리스", "full_name": "텐도 아리스",
+      "profile_img": "assets/profiles/aris.png", "intro": "밀레니엄 게임개발부 아리스입니다.",
+      "schedule": [{ "day": "everyday", "time": "08:00", "messages": ["선생님! 오늘의 모험을 시작합니다!"] }]
+    },
+    "kei": {
+      "name": "케이", "full_name": "텐도 케이",
+      "profile_img": "assets/profiles/kei.png", "intro": "밀레니엄 사이언스 스쿨, 케이입니다.",
+      "schedule": [{ "day": "everyday", "time": "08:00", "messages": ["안녕하세요, 선생님. 오늘 일정은 확인하셨습니까?"] }]
+    },
+    "hina": {
+      "name": "히나", "full_name": "소라사키 히나",
+      "profile_img": "assets/profiles/hina.png", "intro": "",
+      "schedule": [{ "day": "everyday", "time": "07:00", "messages": ["좋은 아침, 선생님. 오늘도 일이 많네."] }]
+    },
+    "ako": {
+      "name": "아코", "full_name": "아마우 아코",
+      "profile_img": "assets/profiles/ako.png", "intro": "업무 이외의 연락 사절",
+      "schedule": [{ "day": "weekday", "time": "07:30", "messages": ["선생님, 오늘 일정은 제대로 확인하셨나요?"] }]
+    },
+    "iori": {
+      "name": "이오리", "full_name": "시로미 이오리",
+      "profile_img": "assets/profiles/iori.png", "intro": "수상한 사람을 보면 즉시 신고",
+      "schedule": [{ "day": "everyday", "time": "08:00", "messages": ["선생님, 오늘도 수상한 일에 휘말리지 말라고."] }]
+    },
+    "chinatsu": {
+      "name": "치나츠", "full_name": "히노미야 치나츠",
+      "profile_img": "assets/profiles/chinatsu.png", "intro": "상실의 아우프헤벤",
+      "schedule": [{ "day": "everyday", "time": "08:00", "messages": ["좋은 아침입니다, 선생님. 식사는 하셨습니까?"] }]
     }
   }
 }

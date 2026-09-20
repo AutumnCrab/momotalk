@@ -41,7 +41,9 @@ BDAY_OWN_QUESTIONS = ["생일 축하해!"]
 BDAY_TEACHER_QUESTIONS = ["오늘 내 생일이야. 축하해줘!"]
 
 ALL_KEYS = ["shiroko", "hoshino", "serika", "ayane", "nonomi", "kuroko",
-            "aru", "mutsuki", "kayoko", "haruka"]
+            "aru", "mutsuki", "kayoko", "haruka",
+            "momoi", "midori", "yuzu", "aris", "kei",
+            "hina", "ako", "iori", "chinatsu"]
 
 
 def _call_gemini(api_key, model, system_prompt, contents):

@@ -8,6 +8,7 @@
 [오른쪽]  대화 + 하단 입력창(엔터/보내기). 말풍선/폰트/프로필 크게.
 """
 
+import html
 import os
 from momotalk.paths import get_base_dir
 import datetime
@@ -58,6 +59,12 @@ def _format_birthday(mmdd):
         return "%d월 %d일" % (int(m), int(d))
     except Exception:
         return mmdd
+
+
+def _bubble_html(text):
+    """말풍선 여러 줄을 기본값보다 살짝 넓은 118% 줄간격으로 표시."""
+    escaped = html.escape(text or "").replace("\n", "<br>")
+    return '<div style="line-height:118%%;">%s</div>' % escaped
 
 
 class _ElideLabel(QLabel):
@@ -930,7 +937,8 @@ class ChatWindow(QWidget):
         av.setStyleSheet("background:transparent;")
         if show_avatar:
             av.setPixmap(make_circular_avatar(char["profile_img"], 44, char["name"]))
-        bubble = QLabel(text)
+        bubble = QLabel(_bubble_html(text))
+        bubble.setTextFormat(Qt.RichText)
         bubble.setWordWrap(True)
         bubble.setFixedWidth(self._bubble_width(text))
         bubble.setStyleSheet(
@@ -955,7 +963,8 @@ class ChatWindow(QWidget):
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(10)
-        bubble = QLabel(text)
+        bubble = QLabel(_bubble_html(text))
+        bubble.setTextFormat(Qt.RichText)
         bubble.setWordWrap(True)
         bubble.setFixedWidth(self._bubble_width(text))
         bubble.setStyleSheet(
